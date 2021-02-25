@@ -38,6 +38,12 @@ macro_rules! reg_alias {
 }
 
 macro_rules! exec_instr {
+    ($vm:ident mv $rd:ident $rs1:ident ) => { // psuedo
+        $vm.add(reg_alias!($rd), 0, reg_alias!($rs1));
+    };
+    ($vm:ident mvi $rd:ident $imm:literal ) => { // psuedo
+        $vm.addi(reg_alias!($rd), 0, $imm);
+    };
     ($vm:ident $op:ident $( $reg:ident )* $( $imm:literal )*) => {
         $vm.$op ( $(reg_alias!($reg),)* $($imm,)* );
     };
@@ -52,28 +58,22 @@ macro_rules! run_asm {
 }
 
 macro_rules! impl_op {
-    ( [R] $mnem:ident $op:expr) => {
+    ( [R] $mnem:ident $op:expr ) => {
         pub fn $mnem(&mut self, i_rd: i32, i_rs1: i32, i_rs2: i32) {
             let rs1: i32 = *self.reg(i_rs1);
             let rs2: i32 = *self.reg(i_rs2);
             *self.reg(i_rd) = $op(rs1, rs2);
+            self.pc += 4;
         }
     };
-    ( [I] $mnem:ident $op:expr) => {
+    ( [I] $mnem:ident $op:expr ) => {
         pub fn $mnem(&mut self, i_rd: i32, i_rs1: i32, imm: i32) {
             assert!(-(1 << 11) <= imm && imm <= (1 << 11 - 1), "imm out of range (12 bits)");
             let rs1: i32 = *self.reg(i_rs1);
             *self.reg(i_rd) = $op(rs1, imm);
+            self.pc += 4;
         }
     };
-   ( [J] $mnem:ident $op:expr) => {
-        pub fn $mnem(&mut self, i_rd: i32, imm: i32) {
-            assert!(-(1 << 19) <= imm && imm <= (1 << 19 - 1), "imm out of range (20 bits)");
-            let rs1: i32 = *self.reg(i_rs1);
-            let pc: &mut i32 = *self.reg(reg_alias!(pc))
-            *self.reg(i_rd) = $op(rs1, imm);
-        }
-   };
 }
 
 macro_rules! impl_ops {

@@ -1,13 +1,20 @@
 #[macro_use]
-mod riscv;
+mod stack;
+
+use stack::Op;
 
 fn main() {
-    let mut vm = riscv::Machine::new(64 * 1024);
-    run_asm! { in vm
-        addi t0 zero 44;
-        add t0 t0 t0;
-        addi t1 zero 900;
-        or t0 t0 t1;
-    }
-    println!("VM: {:?}", vm)
+    let mut vm = stack::Machine::<i32>::new(64 * 1024);
+    let program = assemble! {
+        (word i32)
+        push 4;
+        push 2;
+        push 1234123;
+        dup; dup;
+        push 499213;
+        add;
+        xor;
+        sub;
+    };
+    println!("Result: {:?}", vm.run(&program));
 }
