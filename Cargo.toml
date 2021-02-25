@@ -1,0 +1,9 @@
+[package]
+name = "riscv-rust"
+version = "0.1.0"
+authors = ["mitchelljustin <8631205+mitchelljustin@users.noreply.github.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
