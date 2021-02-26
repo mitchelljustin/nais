@@ -125,34 +125,6 @@ pub mod isa {
 
     use super::{Machine, OpArgs};
 
-    macro_rules! binary_op_funcs {
-        ( $($name:ident ($operator:tt));+; ) => {
-            $(
-                pub fn $name(m: &mut Machine, _: OpArgs) {
-                    if let (Some(x1), Some(x2)) = (m.pop(), m.pop()) {
-                        m.push(x1 $operator x2);
-                    }
-                }
-            )+
-        }
-    }
-
-    macro_rules! branch_cmp_funcs {
-        ( $($name:ident ($cmp:tt));+; ) => {
-            $(
-                pub fn $name(m: &mut Machine, (offset, _): OpArgs) {
-                    if let (Some(top), Some(sec)) = (m.pop(), m.pop()) {
-                        if sec $cmp top {
-                            jump(m, (offset, 0));
-                        }
-                        m.push(sec);
-                        m.push(top);
-                    }
-                }
-            )+
-        }
-    }
-
     pub fn push(m: &mut Machine, (x, _): OpArgs) {
         m.push(x);
     }
@@ -191,6 +163,18 @@ pub mod isa {
         m.pc = (m.pc as isize + offset as isize) as usize;
     }
 
+    macro_rules! binary_op_funcs {
+        ( $($name:ident ($operator:tt));+; ) => {
+            $(
+                pub fn $name(m: &mut Machine, _: OpArgs) {
+                    if let (Some(top), Some(sec)) = (m.pop(), m.pop()) {
+                        m.push(top $operator sec);
+                    }
+                }
+            )+
+        }
+    }
+
     binary_op_funcs! {
         add ( + );
         sub ( - );
@@ -202,11 +186,45 @@ pub mod isa {
         xor ( ^ );
     }
 
+    macro_rules! branch_cmp_funcs {
+        ( $($name:ident ($cmp:tt));+; ) => {
+            $(
+                pub fn $name(m: &mut Machine, (offset, _): OpArgs) {
+                    if let (Some(top), Some(sec)) = (m.pop(), m.pop()) {
+                        if sec $cmp top {
+                            jump(m, (offset, 0));
+                        }
+                        m.push(sec);
+                        m.push(top);
+                    }
+                }
+            )+
+        }
+    }
+
     branch_cmp_funcs! {
         beq ( == );
         bne ( != );
         blt ( < );
         bge ( >= );
+    }
+
+    macro_rules! shift_op_funcs {
+        ( $($name:ident ($shop:tt));+; ) => {
+            $(
+                pub fn $name(m: &mut Machine, (shamt, _): OpArgs) {
+                    if let Some(top) = m.pop() {
+                        let top = (top $shop shamt);
+                        m.push(top);
+                    }
+                }
+            )+
+        };
+    }
+
+    shift_op_funcs! {
+        shl ( << );
+        shr ( >> );
     }
 
     pub mod ops {
@@ -230,16 +248,19 @@ pub mod isa {
             beq bne blt bge
             add sub mul div
             rem and or  xor
+            shl shr
         );
     }
 }
 
+const MAX_CYCLES: isize = 10_000_000;
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum MachineError {
     EmptyStackPop,
     PCOutOfBounds,
     ProgramExit(I),
+    MaxCyclesReached,
 }
 
 #[derive(Debug, PartialEq, Copy, Clone)]
@@ -280,7 +301,8 @@ impl Machine {
         self.stack.push(x)
     }
 
-    pub fn run(&mut self, program: &Program) -> (MachineStatus, Vec<I>) {
+    pub fn run(&mut self, program: &Program) -> (isize, MachineStatus, Vec<I>) {
+        let mut ncycles: isize = 0;
         self.pc = 0;
         self.stack.clear();
         self.status = Running;
@@ -291,8 +313,12 @@ impl Machine {
             }
             let inst = &program.code[self.pc];
             (inst.op.f)(self, inst.args.clone());
-            self.pc += 1
+            self.pc += 1;
+            ncycles += 1;
+            if ncycles == MAX_CYCLES {
+                self.status = Error(MachineError::MaxCyclesReached);
+            }
         }
-        (self.status, self.stack.clone())
+        (ncycles, self.status, self.stack.clone())
     }
 }
