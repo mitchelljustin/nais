@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::isa::{Inst, Op, OpArgs};
+use crate::isa::{Inst, Op, OpArg};
 use std::fmt::{Display, Formatter, Result};
 
 macro_rules! assemble {
@@ -20,20 +20,14 @@ macro_rules! parse_asm_line {
     ( $p:ident label $label:ident ) => {
         $p.add_label(stringify!($label));
     };
-    ( $p:ident call $label:ident ) => {
-        $p.add_placeholder_inst(isa::ops::jal, stringify!($label));
+    ( $p:ident $mnem:ident $label:ident ) => {
+        $p.add_placeholder_inst(isa::ops::$mnem, stringify!($label));
     };
     ( $p:ident $mnem:ident ) => {
         parse_asm_line!($p $mnem 0);
     };
-    ( $p:ident $mnem:ident $a1:literal ) => {
-        parse_asm_line!($p $mnem $a1 0);
-    };
-    ( $p:ident $mnem:ident $a1:literal $a2:literal ) => {
-        $p.add_inst(isa::ops::$mnem, ($a1, $a2));
-    };
-    ( $p:ident $mnem:ident $label:ident ) => {
-        $p.add_placeholder_inst(isa::ops::$mnem, stringify!($label));
+    ( $p:ident $mnem:ident $arg:literal ) => {
+        $p.add_inst(isa::ops::$mnem, $arg);
     };
 }
 
@@ -72,10 +66,10 @@ impl Program {
         self.code[idx]
     }
 
-    pub fn add_inst(&mut self, op: &'static Op, args: OpArgs) {
+    pub fn add_inst(&mut self, op: &'static Op, arg: OpArg) {
         self.code.push(Inst {
             op,
-            args,
+            arg,
         });
     }
 
@@ -83,7 +77,7 @@ impl Program {
         self.reloc_tab.push((self.last_loc(), String::from(label)));
         self.code.push(Inst {
             op,
-            args: (0, 0),
+            arg: 0,
         });
     }
 
@@ -100,7 +94,7 @@ impl Program {
             let inst = &mut self.code[*inst_loc as usize];
             if let Some(target_loc) = self.label_locs.get(label) {
                 let offset = *target_loc - *inst_loc - 1;
-                inst.args.0 = offset;
+                inst.arg = offset;
             } else {
                 panic!("No such label: {}", label);
             }

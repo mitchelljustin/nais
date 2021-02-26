@@ -109,7 +109,7 @@ impl Machine {
                 break;
             }
             let inst = self.program.inst_at(self.pc as usize);
-            (inst.op.f)(self, inst.args);
+            (inst.op.f)(self, inst.arg);
             self.pc += 1;
             self.ncycles += 1;
             if self.ncycles == MAX_CYCLES {

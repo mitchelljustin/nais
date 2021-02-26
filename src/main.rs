@@ -1,29 +1,13 @@
 #![allow(overflowing_literals)]
 
+use machine::*;
+
+use crate::assemble::Program;
+
 #[macro_use]
 mod assemble;
 mod machine;
 mod isa;
-
-use machine::*;
-use crate::assemble::Program;
-
-#[allow(dead_code)]
-fn program1() -> Program {
-assemble! {
-        push 7;
-        dup;
-
-    label loop;
-        shl 1;
-        dup;
-        push 5_000;
-        blt loop;
-
-        pop;
-        exit;
-    }
-}
 
 fn program2() -> Program {
     assemble! {
@@ -32,7 +16,7 @@ fn program2() -> Program {
         push 4; // acc
 
     label loop;
-        call f;
+        jal f;
 
         dup 1; // top = ctr
         subi 1; // ctr -= 1

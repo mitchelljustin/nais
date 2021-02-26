@@ -4,22 +4,22 @@ use crate::machine::MachineStatus::Stopped;
 use super::Machine;
 use std::fmt::{Display, Formatter, Result, Debug};
 
-pub type OpArgs = (i32, i32);
+pub type OpArg = i32;
 
 pub struct Op {
     pub name: &'static str,
-    pub f: fn(&mut Machine, OpArgs),
+    pub f: fn(&mut Machine, OpArg),
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct Inst {
     pub op: &'static Op,
-    pub args: OpArgs,
+    pub arg: OpArg,
 }
 
 impl Display for Inst {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        write!(f, "{:6} {:8x} {:8x}", self.op.name, self.args.0, self.args.1)
+        write!(f, "{:6} {:8x}", self.op.name, self.arg)
     }
 }
 
@@ -32,52 +32,52 @@ impl Debug for Op {
 }
 
 
-pub fn push(m: &mut Machine, (x, _): OpArgs) {
+pub fn push(m: &mut Machine, x: OpArg) {
     m.push(x);
 }
 
-pub fn pop(m: &mut Machine, (n, _): OpArgs) {
+pub fn pop(m: &mut Machine, n: OpArg) {
     for _ in 0..n {
         m.pop();
     }
 }
 
-pub fn dup(m: &mut Machine, (offset, _): OpArgs) {
+pub fn dup(m: &mut Machine, offset: OpArg) {
     if let Some(x) = m.peek(offset) {
         m.push(x);
     }
 }
 
-pub fn put(m: &mut Machine, (offset, _): OpArgs) {
+pub fn put(m: &mut Machine, offset: OpArg) {
     if let Some(top) = m.pop() {
         m.put(top, offset);
     }
 }
 
-pub fn swap(m: &mut Machine, _: OpArgs) {
+pub fn swap(m: &mut Machine, _: OpArg) {
     if let (Some(top), Some(sec)) = (m.pop(), m.pop()) {
         m.push(top);
         m.push(sec);
     }
 }
 
-pub fn breakp(m: &mut Machine, _: OpArgs) {
+pub fn breakp(m: &mut Machine, _: OpArg) {
     println!("BREAKPOINT: {:?}", m);
 }
 
-pub fn print(m: &mut Machine, (offset, _): OpArgs) {
+pub fn print(m: &mut Machine, offset: OpArg) {
     if let Some(x) = m.peek(offset) {
         println!("{} ", x);
     }
 }
 
-pub fn printx(m: &mut Machine, (offset, _): OpArgs) {
+pub fn printx(m: &mut Machine, offset: OpArg) {
     if let Some(x) = m.peek(offset) {
         println!("{:08x} ", x);
     }
 }
 
-pub fn exit(m: &mut Machine, (code, _): OpArgs) {
+pub fn exit(m: &mut Machine, code: OpArg) {
     if code == 0 {
         m.status = Stopped;
     } else {
@@ -85,12 +85,12 @@ pub fn exit(m: &mut Machine, (code, _): OpArgs) {
     }
 }
 
-pub fn jal(m: &mut Machine, (offset, _): OpArgs) {
+pub fn jal(m: &mut Machine, offset: OpArg) {
     m.push(m.pc);
     m.jump(offset);
 }
 
-pub fn ret(m: &mut Machine, _: OpArgs) {
+pub fn ret(m: &mut Machine, _: OpArg) {
     if let Some(loc) = m.pop() {
         m.setpc(loc);
     }
@@ -105,7 +105,7 @@ macro_rules! with_overflow {
 macro_rules! binary_op_funcs {
         ( $($name:ident ($operator:tt));+; ) => {
             $(
-                pub fn $name(m: &mut Machine, _: OpArgs) {
+                pub fn $name(m: &mut Machine, _: OpArg) {
                     if let (Some(top), Some(sec)) = (m.pop(), m.pop()) {
                         m.push(with_overflow!(top $operator sec));
                     }
@@ -128,7 +128,7 @@ binary_op_funcs! {
 macro_rules! binary_op_imm_funcs {
         ( $($name:ident ($operator:tt));+; ) => {
             $(
-                pub fn $name(m: &mut Machine, (arg, _): OpArgs) {
+                pub fn $name(m: &mut Machine, arg: OpArg) {
                     if let Some(top) = m.pop() {
                         m.push(with_overflow!(top $operator arg));
                     }
@@ -151,7 +151,7 @@ binary_op_imm_funcs! {
 macro_rules! branch_cmp_funcs {
         ( $($name:ident ($cmp:tt));+; ) => {
             $(
-                pub fn $name(m: &mut Machine, (offset, _): OpArgs) {
+                pub fn $name(m: &mut Machine, offset: OpArg) {
                     if let (Some(top), Some(sec)) = (m.pop(), m.pop()) {
                         if sec $cmp top {
                             m.jump(offset);
@@ -169,7 +169,7 @@ branch_cmp_funcs! {
         bge ( >= );
     }
 
-pub fn sar(m: &mut Machine, (shamt, _): OpArgs) {
+pub fn sar(m: &mut Machine, shamt: OpArg) {
     if let Some(top) = m.pop() {
         let top = top >> shamt;
         m.push(top);
@@ -179,7 +179,7 @@ pub fn sar(m: &mut Machine, (shamt, _): OpArgs) {
 macro_rules! logical_shift_funcs {
         ( $($name:ident ($shop:tt));+; ) => {
             $(
-                pub fn $name(m: &mut Machine, (shamt, _): OpArgs) {
+                pub fn $name(m: &mut Machine, shamt: OpArg) {
                     if let Some(top) = m.pop() {
                         let top = top as u32;
                         let top = (top $shop shamt);
