@@ -1,9 +1,10 @@
-use std::fmt::{Debug, Formatter, Result};
+use std::fmt::{Debug, Formatter, Result, Write};
 
 use MachineStatus::*;
 
 use crate::assemble::Program;
 use std::iter;
+use crate::isa::Encoder;
 
 const MAX_CYCLES: usize = 10_000;
 
@@ -26,21 +27,17 @@ pub enum MachineStatus {
 }
 
 pub struct Machine {
-    pub program: Program,
+    program_mem: Vec<i32>,
     pub stack: Vec<i32>,
     pub status: MachineStatus,
     pub ncycles: usize,
+    encoder: Encoder
 }
 
 impl Debug for Machine {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        let hex_stack: String = self.stack
-            .iter()
-            .fold(String::from("["), |acc, x| format!("{}{:x}, ", acc, x)) + "]";
         f.debug_struct("Machine")
             .field("status", &self.status)
-            .field("stack", &self.stack)
-            .field("stack(hex)", &hex_stack)
             .field("ncycles", &self.ncycles)
             .finish()
     }
@@ -50,13 +47,16 @@ const PC_ADDR: i32 = 0;
 const SP_ADDR: i32 = 1;
 const FP_ADDR: i32 = 2;
 
+const CODE_START: i32 = 0x1_0000;
+
 impl Machine {
     pub fn new(program: &Program) -> Machine {
         Machine {
-            program: program.clone(),
-            stack: vec![0, 4, 4, 11111111], // PC, SP, FP, boundary
+            program_mem: program.as_binary(),
+            stack: vec![CODE_START, 4, 4, 0xbbbbbb], // PC, SP, FP, boundary
             status: Idle,
             ncycles: 0,
+            encoder: Encoder::new(),
         }
     }
 
@@ -168,23 +168,48 @@ impl Machine {
         *self.fp() = *self.sp();
     }
 
-
+    pub fn stack_dump(&self) -> String {
+        let mut out = String::new();
+        for (i, x) in self.stack.iter().enumerate() {
+            let extra = match i {
+                0 => "pc",
+                1 => "sp",
+                2 => "fp",
+                3 => "boundary",
+                _ => ""
+            };
+            write!(out, "{:02x}. {:8x} [{:8}] {}\n", i, x, x, extra).unwrap();
+        }
+        out
+    }
 
     pub fn run(&mut self) {
         self.status = Running;
         while self.status == Running {
-            let pc = self.getpc();
-            if pc as usize >= self.program.len() {
-                self.status = Error(MachineError::PCOutOfBounds);
-                break;
-            }
-            let inst = self.program.inst_at(pc as usize);
-            (inst.op.f)(self, inst.arg);
-            self.jump(1);
-            self.ncycles += 1;
-            if self.ncycles == MAX_CYCLES {
-                self.status = Error(MachineError::MaxCyclesReached);
-            }
+            self.cycle()
+        }
+    }
+
+    fn cycle(&mut self) {
+        let pc = self.getpc();
+        let pmem_addr = (pc - CODE_START) as usize;
+        if pmem_addr >= self.program_mem.len() {
+            self.status = Error(MachineError::PCOutOfBounds);
+            return;
+        }
+        let inst = self.program_mem[pmem_addr];
+        let opcode = ((inst >> 24) & 0xff) as u8;
+        let mut arg = inst & 0xffffff;
+        if arg >> 23 != 0 {
+            // sign extend
+            arg |= 0xff000000;
+        }
+        let op = self.encoder.op_for_opcode(opcode);
+        (op.f)(self, arg);
+        self.jump(1);
+        self.ncycles += 1;
+        if self.ncycles == MAX_CYCLES {
+            self.status = Error(MachineError::MaxCyclesReached);
         }
     }
 }

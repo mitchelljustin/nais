@@ -51,7 +51,7 @@ macro_rules! assemble {
 impl Display for Program {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         for (i, inst) in self.code.iter().enumerate() {
-            if let Err(e) = write!(f, "{:04x} {}\n", i, inst) {
+            if let Err(e) = write!(f, "1 {:04x} {}\n", i, inst) {
                 return Err(e);
             }
         }
@@ -97,10 +97,6 @@ impl Program {
         self.add_global_var("sp", 1);
         self.add_global_var("fp", 2);
         self.add_label("_entry");
-    }
-
-    pub fn inst_at(&self, idx: usize) -> Inst {
-        self.code[idx]
     }
 
     pub fn add_inst(&mut self, opname: &str, arg: i32) {
@@ -163,10 +159,6 @@ impl Program {
         label_entry.nargs += 1;
     }
 
-    pub fn len(&self) -> usize {
-        return self.code.len();
-    }
-
     pub fn relocate_all(&mut self) {
         for (inst_loc, name) in self.reloc_tab.iter() {
             let inst = &mut self.code[*inst_loc as usize];
@@ -195,11 +187,11 @@ impl Program {
     }
 
     pub fn as_binary(&self) -> Vec<i32> {
-        let mut bin = Vec::with_capacity(self.code.len() * 2);
-        for inst in self.code.iter() {
-            bin.push(self.encoder.opcode_for_op(inst.op));
-            bin.push(inst.arg);
-        }
-        bin
+        self.code.iter().map(|inst| {
+            let opcode = self.encoder.opcode_for_op(inst.op) as i32;
+            let arg_part = inst.arg & 0xffffff;
+            let bin_inst = (opcode << 24) | (arg_part);
+            bin_inst
+        }).collect()
     }
 }

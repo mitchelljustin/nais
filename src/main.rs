@@ -11,48 +11,31 @@ mod isa;
 
 fn program2() -> Program {
     assemble! {
-    local counter;
-    local result;
+    label main;
+    local loop_ctr;
+    local n;
         extend 2;
 
-        push 1;
-        store counter;
+        push 20;
+        store loop_ctr;
 
-        push 5;
-        store result;
-    inner loop;
-        load result;
-        jal quarter_round;
-        store result;
+        push 15;
+        store n;
+    inner cnt_loop;
+        load n;
+        print;
+        muli 2;
+        store n;
 
-        load counter;
+        load loop_ctr;
         subi 1;
-        store counter;
+        store loop_ctr;
 
-        load counter;
+        load loop_ctr;
         push 0;
-        bne loop;
+        bne cnt_loop;
 
-        load result;
-        printx;
-        pop;
-
-        pop 2;
         exit;
-
-    label quarter_round;
-    arg a;
-        aload fp;
-        setfp;
-
-        load a;
-        addi 1;
-        store a;
-
-        astore fp;
-
-        breakp;
-        ret;
     }
 }
 
@@ -62,4 +45,6 @@ fn main() {
     let mut machine = Machine::new(&program);
     machine.run();
     println!("Result: {:?}", machine);
+    println!("<<Stack dump>>");
+    println!("{}",machine.stack_dump());
 }

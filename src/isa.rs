@@ -55,29 +55,15 @@ pub fn store(m: &mut Machine, offset: i32) {
 }
 
 pub fn breakp(m: &mut Machine, _: i32) {
-    println!("<<BREAKPOINT>>");
-    for (i, x) in m.stack.iter().enumerate() {
-        let extra = match i {
-            0 => "pc",
-            1 => "sp",
-            2 => "fp",
-            3 => "boundary",
-            _ => ""
-        };
-        println!("{:02x}. {:8x} [{:8}] {}", i, x, x, extra);
-    }
+    println!("<<BREAKPOINT START>>");
+    println!("{}", m.stack_dump());
     println!("<<BREAKPOINT END>>");
 }
 
-pub fn print(m: &mut Machine, offset: i32) {
-    if let Some(x) = m.load(offset) {
-        println!("{}", x);
-    }
-}
-
-pub fn printx(m: &mut Machine, offset: i32) {
-    if let Some(x) = m.load(offset) {
-        println!("{:08x} ", x);
+pub fn print(m: &mut Machine, _: i32) {
+    if let Some(x) = m.pop() {
+        println!("{:08x} [{}]", x, x);
+        m.push(x);
     }
 }
 
@@ -223,6 +209,10 @@ logical_shift_funcs! {
 macro_rules! register_ops {
     ( $($name:ident)+ ) => {
         pub const OPLIST: &'static [Op] = &[
+            Op {
+                name: "invalid",
+                f: |_, _| panic!("INVALID OP")
+            },
             $(
                 Op {
                     name: stringify!($name),
@@ -243,14 +233,14 @@ register_ops!(
     aload astore setfp
     jal ret
     exit breakp
-    print printx
+    print
 );
 
 #[derive(Clone)]
 pub struct Encoder {
     pub name_to_op: HashMap<&'static str, &'static Op>,
-    pub op_to_opcode: HashMap<&'static str, i32>,
-    pub opcode_to_op: HashMap<i32, &'static Op>,
+    pub op_to_opcode: HashMap<&'static str, u8>,
+    pub opcode_to_op: HashMap<u8, &'static Op>,
 }
 
 impl Encoder {
@@ -261,7 +251,7 @@ impl Encoder {
             opcode_to_op: HashMap::new(),
         };
         for (i, op) in OPLIST.iter().enumerate() {
-            let opcode = i as i32;
+            let opcode = i as u8;
             enc.name_to_op.insert(op.name, op);
             enc.op_to_opcode.insert(op.name, opcode);
             enc.opcode_to_op.insert(opcode, op);
@@ -273,11 +263,11 @@ impl Encoder {
         self.name_to_op.get(name).unwrap()
     }
 
-    pub fn opcode_for_op(&self, op: &Op) -> i32 {
+    pub fn opcode_for_op(&self, op: &Op) -> u8 {
         *self.op_to_opcode.get(op.name).unwrap()
     }
 
-    pub fn op_for_opcode(&self, opcode: i32) -> &'static Op {
+    pub fn op_for_opcode(&self, opcode: u8) -> &'static Op {
         self.opcode_to_op.get(&opcode).unwrap().clone()
     }
 }
