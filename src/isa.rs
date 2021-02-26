@@ -4,6 +4,7 @@ use crate::machine::{MachineError, MachineStatus};
 use crate::machine::MachineStatus::Stopped;
 
 use super::Machine;
+use std::collections::HashMap;
 
 pub struct Op {
     pub name: &'static str,
@@ -50,13 +51,6 @@ pub fn load(m: &mut Machine, offset: i32) {
 pub fn store(m: &mut Machine, offset: i32) {
     if let Some(top) = m.pop() {
         m.store(top, offset);
-    }
-}
-
-pub fn swap(m: &mut Machine, _: i32) {
-    if let (Some(top), Some(sec)) = (m.pop(), m.pop()) {
-        m.push(top);
-        m.push(sec);
     }
 }
 
@@ -226,30 +220,64 @@ logical_shift_funcs! {
         shr ( >> );
     }
 
-pub mod ops {
-
-    macro_rules! register_ops {
-        ( $($name:ident)+ ) => {
+macro_rules! register_ops {
+    ( $($name:ident)+ ) => {
+        pub const OPLIST: &'static [Op] = &[
             $(
-                #[allow(unused, non_upper_case_globals)]
-                pub const $name: &super::Op = &super::Op {
+                Op {
                     name: stringify!($name),
-                    f: super::$name,
-                };
+                    f: $name,
+                },
             )+
+        ];
+    }
+}
+
+register_ops!(
+    push pop extend
+    add sub mul div rem and or  xor
+    addi subi muli divi remi andi ori xori
+    sar shl shr
+    beq bne blt bge
+    load store
+    aload astore setfp
+    jal ret
+    exit breakp
+    print printx
+);
+
+#[derive(Clone)]
+pub struct Encoder {
+    pub name_to_op: HashMap<&'static str, &'static Op>,
+    pub op_to_opcode: HashMap<&'static str, i32>,
+    pub opcode_to_op: HashMap<i32, &'static Op>,
+}
+
+impl Encoder {
+    pub fn new() -> Encoder {
+        let mut enc = Encoder{
+            name_to_op: HashMap::new(),
+            op_to_opcode: HashMap::new(),
+            opcode_to_op: HashMap::new(),
+        };
+        for (i, op) in OPLIST.iter().enumerate() {
+            let opcode = i as i32;
+            enc.name_to_op.insert(op.name, op);
+            enc.op_to_opcode.insert(op.name, opcode);
+            enc.opcode_to_op.insert(opcode, op);
         }
+        enc
     }
 
-    register_ops!(
-        push pop swap extend
-        add sub mul div rem and or  xor
-        addi subi muli divi remi andi ori xori
-        sar shl shr
-        beq bne blt bge
-        load store
-        aload astore setfp
-        jal ret
-        exit breakp
-        print printx
-    );
+    pub fn op_with_name(&self, name: &str) -> &'static Op {
+        self.name_to_op.get(name).unwrap()
+    }
+
+    pub fn opcode_for_op(&self, op: &Op) -> i32 {
+        *self.op_to_opcode.get(op.name).unwrap()
+    }
+
+    pub fn op_for_opcode(&self, opcode: i32) -> &'static Op {
+        self.opcode_to_op.get(&opcode).unwrap().clone()
+    }
 }

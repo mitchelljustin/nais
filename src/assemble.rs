@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter, Result};
 
-use crate::isa::{Inst, Op};
+use crate::isa::{Inst, Encoder};
 
 macro_rules! parse_asm_line {
     ( $p:ident label $label:ident ) => {
@@ -24,13 +24,13 @@ macro_rules! parse_asm_line {
         parse_asm_line!($p store $dest);
     };
     ( $p:ident $mnem:ident $label:ident ) => {
-        $p.add_placeholder_inst(isa::ops::$mnem, stringify!($label));
+        $p.add_placeholder_inst(stringify!($mnem), stringify!($label));
     };
     ( $p:ident $mnem:ident ) => {
         parse_asm_line!($p $mnem 0);
     };
     ( $p:ident $mnem:ident $arg:literal ) => {
-        $p.add_inst(isa::ops::$mnem, $arg);
+        $p.add_inst(stringify!($mnem), $arg);
     };
 }
 
@@ -76,6 +76,7 @@ pub struct Program {
     inst_context: Vec<String>,
     cur_label: String,
     reloc_tab: Vec<(i32, String)>,
+    encoder: Encoder,
 }
 
 impl Program {
@@ -87,6 +88,7 @@ impl Program {
             inst_context: Vec::new(),
             reloc_tab: Vec::new(),
             cur_label: String::new(),
+            encoder: Encoder::new(),
         }
     }
 
@@ -101,7 +103,8 @@ impl Program {
         self.code[idx]
     }
 
-    pub fn add_inst(&mut self, op: &'static Op, arg: i32) {
+    pub fn add_inst(&mut self, opname: &str, arg: i32) {
+        let op = self.encoder.op_with_name(opname);
         self.code.push(Inst {
             op,
             arg,
@@ -109,9 +112,9 @@ impl Program {
         self.inst_context.push(self.cur_label.clone());
     }
 
-    pub fn add_placeholder_inst(&mut self, op: &'static Op, label: &str) {
+    pub fn add_placeholder_inst(&mut self, opname: &str, label: &str) {
         self.reloc_tab.push((self.code.len() as i32, String::from(label)));
-        self.add_inst(op, 0);
+        self.add_inst(opname, 0);
     }
 
     pub fn add_label(&mut self, name: &str) {
@@ -192,8 +195,10 @@ impl Program {
     }
 
     pub fn as_binary(&self) -> Vec<i32> {
-        let bin = Vec::new();
+        let mut bin = Vec::with_capacity(self.code.len() * 2);
         for inst in self.code.iter() {
+            bin.push(self.encoder.opcode_for_op(inst.op));
+            bin.push(inst.arg);
         }
         bin
     }
