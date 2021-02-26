@@ -11,44 +11,47 @@ mod isa;
 
 fn program2() -> Program {
     assemble! {
-    label start;
-    var ctr;
-        push 25; // ctr
+    local counter;
+    local result;
+        extend 2;
 
-    var acc;
-        push 4; // acc
+        push 1;
+        store counter;
 
-    label loop;
-        jal f;
+        push 5;
+        store result;
+    inner loop;
+        load result;
+        jal quarter_round;
+        store result;
 
-        load ctr;
+        load counter;
         subi 1;
-        store ctr;
+        store counter;
 
-        load ctr;
+        load counter;
         push 0;
         bne loop;
 
+        load result;
         printx;
-        print;
+        pop;
+
         pop 2;
         exit;
 
-    label f;
-        // [arg retaddr]
-        dup 1; // [arg retaddr acc]
+    label quarter_round;
+    arg a;
+        aload fp;
+        setfp;
 
-        printx;
-        dup;        // [a a]
-        dup;        // [a a a]
-        shl 8;      // [a a a<<]
-        swap;       // [a a<< a]
-        shr 24;     // [a a<< a>>]
-        or;         // [a a<<|a>>]
-        xor;        // [a^(a<<|a>>)]
-        addi 0xfff82913; // [arg retaddr acc']
-        put 1; // [acc' retaddr]
+        load a;
+        addi 1;
+        store a;
 
+        astore fp;
+
+        breakp;
         ret;
     }
 }
