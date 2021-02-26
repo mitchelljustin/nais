@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter, Result};
 
 use MachineStatus::*;
-use std::cmp::max;
 
 macro_rules! parse_asm_line {
     ( $p:ident label $label:ident ) => {
@@ -25,16 +24,17 @@ macro_rules! parse_asm_line {
 macro_rules! assemble {
     ( $( $mnem:ident $($label:ident)* $($a:literal)* );+; ) => {
        {
-           let mut program: Program = Program::new();
+           let mut p = Program::new();
            $(
-                parse_asm_line!(program $mnem $($label)* $($a)*);
+                parse_asm_line!(p $mnem $($label)* $($a)*);
            )+
-           program.relocate_all();
-           program
+           p.relocate_all();
+           p
        }
     };
 }
 
+#[derive(Clone)]
 pub struct Program {
     code: Vec<Inst>,
     label_locs: HashMap<String, i32>,
@@ -98,7 +98,7 @@ pub struct Op {
     f: fn(&mut Machine, OpArgs),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Inst {
     pub op: &'static Op,
     pub args: OpArgs,
@@ -308,7 +308,7 @@ pub mod isa {
     }
 }
 
-const MAX_CYCLES: isize = 10_000;
+const MAX_CYCLES: usize = 10_000;
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum MachineError {
@@ -327,19 +327,33 @@ pub enum MachineStatus {
     Error(MachineError),
 }
 
-#[derive(Debug)]
 pub struct Machine {
+    program: Program,
     stack: Vec<i32>,
     status: MachineStatus,
     pc: usize,
+    ncycles: usize,
+}
+
+impl Debug for Machine {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        f.debug_struct("Machine")
+            .field("status", &self.status)
+            .field("stack", &self.stack)
+            .field("pc", &self.pc)
+            .field("ncycles", &self.ncycles)
+            .finish()
+    }
 }
 
 impl Machine {
-    pub fn new() -> Machine {
+    pub fn new(program: &Program) -> Machine {
         Machine {
+            program: program.clone(),
             stack: Vec::new(),
             status: Idle,
             pc: 0,
+            ncycles: 0,
         }
     }
 
@@ -387,28 +401,20 @@ impl Machine {
         self.pc = (self.pc as isize + offset as isize) as usize;
     }
 
-    pub fn run(&mut self, program: &Program) -> (isize, MachineStatus, Vec<i32>) {
-        let mut ncycles: isize = 0;
-        self.pc = 0;
-        self.stack.clear();
+    pub fn run(&mut self) {
         self.status = Running;
         while self.status == Running {
-            if self.pc >= program.len() {
+            if self.pc >= self.program.len() {
                 self.status = Error(MachineError::PCOutOfBounds);
                 break;
             }
-            let inst = &program.code[self.pc];
-            (inst.op.f)(self, inst.args.clone());
+            let inst = self.program.code[self.pc];
+            (inst.op.f)(self, inst.args);
             self.pc += 1;
-            ncycles += 1;
-            if ncycles == MAX_CYCLES {
+            self.ncycles += 1;
+            if self.ncycles == MAX_CYCLES {
                 self.status = Error(MachineError::MaxCyclesReached);
             }
         }
-        let res_stack = self.stack.clone();
-        let len = res_stack.len() as isize;
-        let start = max(len - 10, 0) as usize;
-        let res_stack = res_stack[start..].to_vec();
-        (ncycles, self.status, res_stack)
     }
 }

@@ -23,7 +23,7 @@ assemble! {
 }
 
 fn program2() -> Program {
-    return assemble! {
+    assemble! {
         push 25; // ctr
         push 0xfffffffa; // acc
 
@@ -57,7 +57,8 @@ fn program2() -> Program {
 }
 
 fn main() {
-    let mut vm = Machine::new();
     let program = program2();
-    println!("Result: {:?}", vm.run(&program));
+    let mut machine = Machine::new(&program);
+    machine.run();
+    println!("Result: {:?}", machine);
 }
