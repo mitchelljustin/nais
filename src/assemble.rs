@@ -1,10 +1,27 @@
 use std::collections::HashMap;
 
 use crate::isa::{Inst, Op, OpArgs};
+use std::fmt::{Display, Formatter, Result};
+
+macro_rules! assemble {
+    ( $( $mnem:ident $($label:ident)* $($a:literal)* );+; ) => {
+       {
+           let mut p = Program::new();
+           $(
+                parse_asm_line!(p $mnem $($label)* $($a)*);
+           )+
+           p.relocate_all();
+           p
+       }
+    };
+}
 
 macro_rules! parse_asm_line {
     ( $p:ident label $label:ident ) => {
         $p.add_label(stringify!($label));
+    };
+    ( $p:ident call $label:ident ) => {
+        $p.add_placeholder_inst(isa::ops::jal, stringify!($label));
     };
     ( $p:ident $mnem:ident ) => {
         parse_asm_line!($p $mnem 0);
@@ -20,24 +37,22 @@ macro_rules! parse_asm_line {
     };
 }
 
-macro_rules! assemble {
-    ( $( $mnem:ident $($label:ident)* $($a:literal)* );+; ) => {
-       {
-           let mut p = Program::new();
-           $(
-                parse_asm_line!(p $mnem $($label)* $($a)*);
-           )+
-           p.relocate_all();
-           p
-       }
-    };
-}
-
 #[derive(Clone)]
 pub struct Program {
     code: Vec<Inst>,
     label_locs: HashMap<String, i32>,
     reloc_tab: Vec<(i32, String)>
+}
+
+impl Display for Program {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        for (i, inst) in self.code.iter().enumerate() {
+            if let Err(e) = write!(f, "{:04x}: {}\n", i, inst) {
+                return Err(e)
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Program {

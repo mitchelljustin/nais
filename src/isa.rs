@@ -19,7 +19,7 @@ pub struct Inst {
 
 impl Display for Inst {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        write!(f, "{} {:8x} {:8x}", self.op.name, self.args.0, self.args.1)
+        write!(f, "{:6} {:8x} {:8x}", self.op.name, self.args.0, self.args.1)
     }
 }
 
@@ -61,7 +61,7 @@ pub fn swap(m: &mut Machine, _: OpArgs) {
     }
 }
 
-pub fn breakpoint(m: &mut Machine, _: OpArgs) {
+pub fn breakp(m: &mut Machine, _: OpArgs) {
     println!("BREAKPOINT: {:?}", m);
 }
 
@@ -85,9 +85,15 @@ pub fn exit(m: &mut Machine, (code, _): OpArgs) {
     }
 }
 
-#[allow(dead_code)]
-pub fn jump(m: &mut Machine, (offset, _): OpArgs) {
+pub fn jal(m: &mut Machine, (offset, _): OpArgs) {
+    m.push(m.pc);
     m.jump(offset);
+}
+
+pub fn ret(m: &mut Machine, _: OpArgs) {
+    if let Some(loc) = m.pop() {
+        m.setpc(loc);
+    }
 }
 
 macro_rules! with_overflow {
@@ -194,23 +200,24 @@ pub mod ops {
     use super::Op;
 
     macro_rules! register_ops {
-            ( $($name:ident)+ ) => {
-                $(
-                    #[allow(unused, non_upper_case_globals)]
-                    pub const $name: &Op = &Op {
-                        name: stringify!($name),
-                        f: super::$name,
-                    };
-                )+
-            }
+        ( $($name:ident)+ ) => {
+            $(
+                #[allow(unused, non_upper_case_globals)]
+                pub const $name: &Op = &Op {
+                    name: stringify!($name),
+                    f: super::$name,
+                };
+            )+
         }
+    }
 
     register_ops!(
-            push pop dup swap put
-            exit breakpoint print printx
-            beq bne blt bge
-            add sub mul div rem and or  xor
-            addi subi muli divi remi andi ori xori
-            sar shl shr
-        );
+        push pop dup swap put
+        exit breakp print printx
+        beq bne blt bge
+        jal ret
+        add sub mul div rem and or  xor
+        addi subi muli divi remi andi ori xori
+        sar shl shr
+    );
 }

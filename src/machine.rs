@@ -27,7 +27,7 @@ pub struct Machine {
     pub program: Program,
     pub stack: Vec<i32>,
     pub status: MachineStatus,
-    pub pc: usize,
+    pub pc: i32,
     pub ncycles: usize,
 }
 
@@ -93,18 +93,22 @@ impl Machine {
         };
     }
 
+    pub fn setpc(&mut self, loc: i32) {
+        self.pc = loc;
+    }
+
     pub fn jump(&mut self, offset: i32) {
-        self.pc = (self.pc as isize + offset as isize) as usize;
+        self.setpc(self.pc + offset);
     }
 
     pub fn run(&mut self) {
         self.status = Running;
         while self.status == Running {
-            if self.pc >= self.program.len() {
+            if self.pc as usize >= self.program.len() {
                 self.status = Error(MachineError::PCOutOfBounds);
                 break;
             }
-            let inst = self.program.inst_at(self.pc);
+            let inst = self.program.inst_at(self.pc as usize);
             (inst.op.f)(self, inst.args);
             self.pc += 1;
             self.ncycles += 1;
