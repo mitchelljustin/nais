@@ -10,7 +10,7 @@ const MAX_CYCLES: usize = 10_000;
 pub enum MachineError {
     EmptyStackPop,
     PCOutOfBounds,
-    StackOffsetOutOfBounds,
+    StackIndexOutOfBounds,
     ProgramExit(i32),
     MaxCyclesReached,
 }
@@ -63,29 +63,36 @@ impl Machine {
         }
     }
 
-    fn stack_ref(&mut self, offset: i32) -> Option<&mut i32> {
-        let offset = offset as usize;
-        let max_offset = self.stack.len();
-        if offset >= max_offset {
-            self.status = Error(MachineError::StackOffsetOutOfBounds);
-            return None
-        }
-        Some(&mut self.stack[max_offset - offset - 1])
+    fn stack_offset_ref(&mut self, offset: i32) -> Option<&mut i32> {
+        self.stack_ref(self.stack.len() as i32 - 1 - offset)
     }
 
-    pub fn peek(&mut self, offset: i32) -> Option<i32> {
-        match self.stack_ref(offset) {
-            None => None,
-            Some(r) => Some(*r)
+    fn stack_ref(&mut self, loc: i32) -> Option<&mut i32> {
+        if loc < 0 {
+            self.status = Error(MachineError::StackIndexOutOfBounds);
+            return None
         }
+        let max_loc = self.stack.len();
+        if loc >= max_loc as i32 {
+            self.status = Error(MachineError::StackIndexOutOfBounds);
+            return None
+        }
+        Some(&mut self.stack[loc as usize])
     }
 
     pub fn push(&mut self, x: i32) {
         self.stack.push(x)
     }
 
+    pub fn peek(&mut self, offset: i32) -> Option<i32> {
+        match self.stack_offset_ref(offset) {
+            None => None,
+            Some(r) => Some(*r)
+        }
+    }
+
     pub fn put(&mut self, x: i32, offset: i32) {
-        match self.stack_ref(offset) {
+        match self.stack_offset_ref(offset) {
             None => {},
             Some(r) => {
                 *r = x;
@@ -99,6 +106,19 @@ impl Machine {
 
     pub fn jump(&mut self, offset: i32) {
         self.setpc(self.pc + offset);
+    }
+
+    pub fn store(&mut self, loc: i32, x: i32) {
+        if let Some(r) = self.stack_ref(loc) {
+            *r = x;
+        }
+    }
+
+    pub fn load(&mut self, loc: i32) -> Option<i32> {
+        match self.stack_ref(loc) {
+            None => None,
+            Some(r) => Some(*r),
+        }
     }
 
     pub fn run(&mut self) {

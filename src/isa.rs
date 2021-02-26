@@ -96,6 +96,18 @@ pub fn ret(m: &mut Machine, _: OpArg) {
     }
 }
 
+pub fn load(m: &mut Machine, loc: OpArg) {
+    if let Some(x) = m.load(loc) {
+        m.push(x);
+    }
+}
+
+pub fn store(m: &mut Machine, loc: OpArg) {
+    if let Some(x) = m.pop() {
+        m.store(loc, x);
+    }
+}
+
 macro_rules! with_overflow {
         ($top:ident $op:tt $arg:ident) => {
             (($top as i64) $op ($arg as i64)) as i32
@@ -216,6 +228,7 @@ pub mod ops {
         exit breakp print printx
         beq bne blt bge
         jal ret
+        load store
         add sub mul div rem and or  xor
         addi subi muli divi remi andi ori xori
         sar shl shr

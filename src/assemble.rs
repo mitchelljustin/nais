@@ -20,6 +20,9 @@ macro_rules! parse_asm_line {
     ( $p:ident label $label:ident ) => {
         $p.add_label(stringify!($label));
     };
+    ( $p:ident var $label:ident ) => {
+        $p.add_stack_label(stringify!($label));
+    };
     ( $p:ident $mnem:ident $label:ident ) => {
         $p.add_placeholder_inst(isa::ops::$mnem, stringify!($label));
     };
@@ -29,13 +32,6 @@ macro_rules! parse_asm_line {
     ( $p:ident $mnem:ident $arg:literal ) => {
         $p.add_inst(isa::ops::$mnem, $arg);
     };
-}
-
-#[derive(Clone)]
-pub struct Program {
-    code: Vec<Inst>,
-    label_locs: HashMap<String, i32>,
-    reloc_tab: Vec<(i32, String)>
 }
 
 impl Display for Program {
@@ -49,11 +45,20 @@ impl Display for Program {
     }
 }
 
+#[derive(Clone)]
+pub struct Program {
+    code: Vec<Inst>,
+    label_locs: HashMap<String, i32>,
+    stack_label_locs: HashMap<String, i32>,
+    reloc_tab: Vec<(i32, String)>
+}
+
 impl Program {
     pub fn new() -> Program {
         Program {
             code: Vec::new(),
             label_locs: HashMap::new(),
+            stack_label_locs: HashMap::new(),
             reloc_tab: Vec::new(),
         }
     }
@@ -85,6 +90,13 @@ impl Program {
         self.label_locs.insert(String::from(name), self.last_loc());
     }
 
+    pub fn add_stack_label(&mut self, name: &str) {
+        self.stack_label_locs.insert(
+            String::from(name),
+            self.stack_label_locs.len() as i32
+        );
+    }
+
     pub fn len(&self) -> usize {
         return self.code.len()
     }
@@ -95,6 +107,8 @@ impl Program {
             if let Some(target_loc) = self.label_locs.get(label) {
                 let offset = *target_loc - *inst_loc - 1;
                 inst.arg = offset;
+            } else if let Some(target_stack_loc) = self.stack_label_locs.get(label) {
+                inst.arg = *target_stack_loc;
             } else {
                 panic!("No such label: {}", label);
             }

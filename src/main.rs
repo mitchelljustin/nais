@@ -12,17 +12,21 @@ mod isa;
 fn program2() -> Program {
     assemble! {
     label start;
+    var ctr;
         push 25; // ctr
+
+    var acc;
         push 4; // acc
 
     label loop;
         jal f;
 
-        dup 1; // top = ctr
-        subi 1; // ctr -= 1
-        dup; // sec, top = ctr, ctr
-        put 2; // *ctr = pop()
-        push 0; // sec, top = ctr, 0
+        load ctr;
+        subi 1;
+        store ctr;
+
+        load ctr;
+        push 0;
         bne loop;
 
         printx;
