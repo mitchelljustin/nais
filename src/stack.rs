@@ -129,14 +129,21 @@ pub mod isa {
         m.push(x);
     }
 
-    pub fn pop(m: &mut Machine, _: OpArgs) {
-        m.pop();
+    pub fn pop(m: &mut Machine, (n, _): OpArgs) {
+        for _ in 0..n {
+            m.pop();
+        }
     }
 
-    pub fn dup(m: &mut Machine, _: OpArgs) {
-        if let Some(x) = m.pop() {
+    pub fn dup(m: &mut Machine, (offset, _): OpArgs) {
+        if let Some(x) = m.peek(offset) {
             m.push(x);
-            m.push(x);
+        }
+    }
+
+    pub fn put(m: &mut Machine, (offset, _): OpArgs) {
+        if let Some(top) = m.pop() {
+            m.put(top, offset);
         }
     }
 
@@ -148,7 +155,13 @@ pub mod isa {
     }
 
     pub fn breakpoint(m: &mut Machine, _: OpArgs) {
-        println!("BREAK: {:?}", m);
+        println!("BREAKPOINT: {:?}", m);
+    }
+
+    pub fn print(m: &mut Machine, (offset, _): OpArgs) {
+        if let Some(x) = m.peek(offset) {
+            println!("{} ", x);
+        }
     }
 
     pub fn exit(m: &mut Machine, (code, _): OpArgs) {
@@ -186,6 +199,29 @@ pub mod isa {
         xor ( ^ );
     }
 
+    macro_rules! binary_op_imm_funcs {
+        ( $($name:ident ($operator:tt));+; ) => {
+            $(
+                pub fn $name(m: &mut Machine, (arg, _): OpArgs) {
+                    if let Some(top) = m.pop() {
+                        m.push(top $operator arg);
+                    }
+                }
+            )+
+        }
+    }
+
+    binary_op_imm_funcs! {
+        addi ( + );
+        subi ( - );
+        muli ( * );
+        divi ( / );
+        remi ( % );
+        andi ( & );
+        ori  ( | );
+        xori ( ^ );
+    }
+
     macro_rules! branch_cmp_funcs {
         ( $($name:ident ($cmp:tt));+; ) => {
             $(
@@ -194,8 +230,6 @@ pub mod isa {
                         if sec $cmp top {
                             jump(m, (offset, 0));
                         }
-                        m.push(sec);
-                        m.push(top);
                     }
                 }
             )+
@@ -243,11 +277,11 @@ pub mod isa {
         }
 
         register_ops!(
-            push pop dup swap
-            exit breakpoint
+            push pop dup swap put
+            exit breakpoint print
             beq bne blt bge
-            add sub mul div
-            rem and or  xor
+            add sub mul div rem and or  xor
+            addi subi muli divi remi andi ori xori
             shl shr
         );
     }
@@ -259,6 +293,7 @@ const MAX_CYCLES: isize = 10_000_000;
 pub enum MachineError {
     EmptyStackPop,
     PCOutOfBounds,
+    StackOffsetOutOfBounds,
     ProgramExit(I),
     MaxCyclesReached,
 }
@@ -297,8 +332,34 @@ impl Machine {
         }
     }
 
+    fn stack_ref(&mut self, offset: I) -> Option<&mut I> {
+        let offset = offset as usize;
+        let max_offset = self.stack.len();
+        if offset >= max_offset {
+            self.status = Error(MachineError::StackOffsetOutOfBounds);
+            return None
+        }
+        Some(&mut self.stack[max_offset - offset - 1])
+    }
+
+    pub fn peek(&mut self, offset: I) -> Option<I> {
+        match self.stack_ref(offset) {
+            None => None,
+            Some(r) => Some(*r)
+        }
+    }
+
     pub fn push(&mut self, x: I) {
         self.stack.push(x)
+    }
+
+    pub fn put(&mut self, x: I, offset: I) {
+        match self.stack_ref(offset) {
+            None => {},
+            Some(r) => {
+                *r = x;
+            }
+        };
     }
 
     pub fn run(&mut self, program: &Program) -> (isize, MachineStatus, Vec<I>) {
