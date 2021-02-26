@@ -1,9 +1,12 @@
 #![allow(overflowing_literals)]
 
 #[macro_use]
-mod stack;
+mod assemble;
+mod machine;
+mod isa;
 
-use stack::*;
+use machine::*;
+use crate::assemble::Program;
 
 #[allow(dead_code)]
 fn program1() -> Program {
