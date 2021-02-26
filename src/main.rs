@@ -1,20 +1,23 @@
 #[macro_use]
 mod stack;
 
-use stack::Op;
+use stack::*;
 
 fn main() {
-    let mut vm = stack::Machine::<i32>::new(64 * 1024);
+    let mut vm = stack::Machine::new();
     let program = assemble! {
-        (word i32)
-        push 4;
-        push 2;
-        push 1234123;
-        dup; dup;
-        push 499213;
-        add;
-        xor;
-        sub;
+        push 10;
+        dup;
+
+    label loop;
+        pop;
+        push 26;
+        mul;
+        push 1_000_000;
+        blt loop;
+
+        pop;
+        exit;
     };
     println!("Result: {:?}", vm.run(&program));
 }
