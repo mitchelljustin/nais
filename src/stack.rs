@@ -2,8 +2,7 @@ use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter, Result};
 
 use MachineStatus::*;
-
-type I = i32;
+use std::cmp::max;
 
 macro_rules! parse_asm_line {
     ( $p:ident label $label:ident ) => {
@@ -38,8 +37,8 @@ macro_rules! assemble {
 
 pub struct Program {
     code: Vec<Inst>,
-    label_locs: HashMap<String, I>,
-    reloc_tab: Vec<(I, String)>
+    label_locs: HashMap<String, i32>,
+    reloc_tab: Vec<(i32, String)>
 }
 
 impl Program {
@@ -51,8 +50,8 @@ impl Program {
         }
     }
 
-    fn last_loc(&self) -> I {
-        self.code.len() as I
+    fn last_loc(&self) -> i32 {
+        self.code.len() as i32
     }
 
     pub fn add_inst(&mut self, op: &'static Op, args: OpArgs) {
@@ -80,7 +79,7 @@ impl Program {
 
     pub fn relocate_all(&mut self) {
         for (inst_loc, label) in self.reloc_tab.iter() {
-            let mut inst: &mut Inst = &mut self.code[*inst_loc as usize];
+            let inst = &mut self.code[*inst_loc as usize];
             if let Some(target_loc) = self.label_locs.get(label) {
                 let offset = *target_loc - *inst_loc - 1;
                 inst.args.0 = offset;
@@ -92,7 +91,7 @@ impl Program {
     }
 }
 
-pub type OpArgs = (I, I);
+pub type OpArgs = (i32, i32);
 
 pub struct Op {
     name: &'static str,
@@ -148,9 +147,9 @@ pub mod isa {
     }
 
     pub fn swap(m: &mut Machine, _: OpArgs) {
-        if let (Some(x1), Some(x2)) = (m.pop(), m.pop()) {
-            m.push(x1);
-            m.push(x2);
+        if let (Some(top), Some(sec)) = (m.pop(), m.pop()) {
+            m.push(top);
+            m.push(sec);
         }
     }
 
@@ -164,6 +163,12 @@ pub mod isa {
         }
     }
 
+    pub fn printx(m: &mut Machine, (offset, _): OpArgs) {
+        if let Some(x) = m.peek(offset) {
+            println!("{:08x} ", x);
+        }
+    }
+
     pub fn exit(m: &mut Machine, (code, _): OpArgs) {
         if code == 0 {
             m.status = Stopped;
@@ -172,8 +177,15 @@ pub mod isa {
         }
     }
 
+    #[allow(dead_code)]
     pub fn jump(m: &mut Machine, (offset, _): OpArgs) {
-        m.pc = (m.pc as isize + offset as isize) as usize;
+        m.jump(offset);
+    }
+
+    macro_rules! with_overflow {
+        ($top:ident $op:tt $arg:ident) => {
+            (($top as i64) $op ($arg as i64)) as i32
+        };
     }
 
     macro_rules! binary_op_funcs {
@@ -181,7 +193,7 @@ pub mod isa {
             $(
                 pub fn $name(m: &mut Machine, _: OpArgs) {
                     if let (Some(top), Some(sec)) = (m.pop(), m.pop()) {
-                        m.push(top $operator sec);
+                        m.push(with_overflow!(top $operator sec));
                     }
                 }
             )+
@@ -204,7 +216,7 @@ pub mod isa {
             $(
                 pub fn $name(m: &mut Machine, (arg, _): OpArgs) {
                     if let Some(top) = m.pop() {
-                        m.push(top $operator arg);
+                        m.push(with_overflow!(top $operator arg));
                     }
                 }
             )+
@@ -228,7 +240,7 @@ pub mod isa {
                 pub fn $name(m: &mut Machine, (offset, _): OpArgs) {
                     if let (Some(top), Some(sec)) = (m.pop(), m.pop()) {
                         if sec $cmp top {
-                            jump(m, (offset, 0));
+                            m.jump(offset);
                         }
                     }
                 }
@@ -243,12 +255,21 @@ pub mod isa {
         bge ( >= );
     }
 
-    macro_rules! shift_op_funcs {
+    pub fn sar(m: &mut Machine, (shamt, _): OpArgs) {
+        if let Some(top) = m.pop() {
+            let top = top >> shamt;
+            m.push(top);
+        }
+    }
+
+    macro_rules! logical_shift_funcs {
         ( $($name:ident ($shop:tt));+; ) => {
             $(
                 pub fn $name(m: &mut Machine, (shamt, _): OpArgs) {
                     if let Some(top) = m.pop() {
+                        let top = top as u32;
                         let top = (top $shop shamt);
+                        let top = top as i32;
                         m.push(top);
                     }
                 }
@@ -256,7 +277,7 @@ pub mod isa {
         };
     }
 
-    shift_op_funcs! {
+    logical_shift_funcs! {
         shl ( << );
         shr ( >> );
     }
@@ -278,23 +299,23 @@ pub mod isa {
 
         register_ops!(
             push pop dup swap put
-            exit breakpoint print
+            exit breakpoint print printx
             beq bne blt bge
             add sub mul div rem and or  xor
             addi subi muli divi remi andi ori xori
-            shl shr
+            sar shl shr
         );
     }
 }
 
-const MAX_CYCLES: isize = 10_000_000;
+const MAX_CYCLES: isize = 10_000;
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum MachineError {
     EmptyStackPop,
     PCOutOfBounds,
     StackOffsetOutOfBounds,
-    ProgramExit(I),
+    ProgramExit(i32),
     MaxCyclesReached,
 }
 
@@ -308,7 +329,7 @@ pub enum MachineStatus {
 
 #[derive(Debug)]
 pub struct Machine {
-    stack: Vec<I>,
+    stack: Vec<i32>,
     status: MachineStatus,
     pc: usize,
 }
@@ -322,7 +343,7 @@ impl Machine {
         }
     }
 
-    pub fn pop(&mut self) -> Option<I> {
+    pub fn pop(&mut self) -> Option<i32> {
         match self.stack.pop() {
             None => {
                 self.status = Error(MachineError::EmptyStackPop);
@@ -332,7 +353,7 @@ impl Machine {
         }
     }
 
-    fn stack_ref(&mut self, offset: I) -> Option<&mut I> {
+    fn stack_ref(&mut self, offset: i32) -> Option<&mut i32> {
         let offset = offset as usize;
         let max_offset = self.stack.len();
         if offset >= max_offset {
@@ -342,18 +363,18 @@ impl Machine {
         Some(&mut self.stack[max_offset - offset - 1])
     }
 
-    pub fn peek(&mut self, offset: I) -> Option<I> {
+    pub fn peek(&mut self, offset: i32) -> Option<i32> {
         match self.stack_ref(offset) {
             None => None,
             Some(r) => Some(*r)
         }
     }
 
-    pub fn push(&mut self, x: I) {
+    pub fn push(&mut self, x: i32) {
         self.stack.push(x)
     }
 
-    pub fn put(&mut self, x: I, offset: I) {
+    pub fn put(&mut self, x: i32, offset: i32) {
         match self.stack_ref(offset) {
             None => {},
             Some(r) => {
@@ -362,7 +383,11 @@ impl Machine {
         };
     }
 
-    pub fn run(&mut self, program: &Program) -> (isize, MachineStatus, Vec<I>) {
+    pub fn jump(&mut self, offset: i32) {
+        self.pc = (self.pc as isize + offset as isize) as usize;
+    }
+
+    pub fn run(&mut self, program: &Program) -> (isize, MachineStatus, Vec<i32>) {
         let mut ncycles: isize = 0;
         self.pc = 0;
         self.stack.clear();
@@ -380,6 +405,10 @@ impl Machine {
                 self.status = Error(MachineError::MaxCyclesReached);
             }
         }
-        (ncycles, self.status, self.stack.clone())
+        let res_stack = self.stack.clone();
+        let len = res_stack.len() as isize;
+        let start = max(len - 10, 0) as usize;
+        let res_stack = res_stack[start..].to_vec();
+        (ncycles, self.status, res_stack)
     }
 }

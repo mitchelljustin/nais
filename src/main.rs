@@ -1,40 +1,19 @@
+#![allow(overflowing_literals)]
+
 #[macro_use]
 mod stack;
 
 use stack::*;
 
-fn program2() -> Program {
-    return assemble! {
-        push 15; // counter
-        push 3; // acc
-        print 1;
-        print;
-
-    label loop;
-        print;
-
-        // op
-        muli 3;
-
-        dup 1; // top = counter
-        subi 1; // top -= 1
-        dup; // sec, top = counter, counter
-        put 2; // *counter = pop()
-        push 0; // sec, top = counter, 0
-        bne loop;
-
-        exit;
-    }
-}
-
 #[allow(dead_code)]
-fn program1() -> Program { // TODO: fix
-    assemble! {
+fn program1() -> Program {
+assemble! {
         push 7;
         dup;
 
     label loop;
         shl 1;
+        dup;
         push 5_000;
         blt loop;
 
@@ -43,6 +22,39 @@ fn program1() -> Program { // TODO: fix
     }
 }
 
+fn program2() -> Program {
+    return assemble! {
+        push 25; // ctr
+        push 0xfffffffa; // acc
+
+    label loop;
+        // acc = f(acc)
+        // stack: [acc]
+
+        printx;
+        dup;        // [a a]
+        dup;        // [a a a]
+        shl 8;      // [a a a<<]
+        swap;       // [a a<< a]
+        shr 24;     // [a a<< a>>]
+        or;         // [a a<<|a>>]
+        xor;        // [a']
+        addi 0xfff82913;
+        // f(acc) end, stack: [acc]
+
+        dup 1; // top = ctr
+        subi 1; // ctr -= 1
+        dup; // sec, top = ctr, ctr
+        put 2; // *ctr = pop()
+        push 0; // sec, top = ctr, 0
+        bne loop;
+
+        printx;
+        print;
+        pop 2;
+        exit;
+    }
+}
 
 fn main() {
     let mut vm = Machine::new();
