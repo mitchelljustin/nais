@@ -12,7 +12,8 @@ mod constants;
 
 fn boneless_chacha20() -> Program {
     program_from_asm! {
-    const magic_val 0x8ab3ce;
+    const c_magic_val 0x8ab3ce;
+    const c_init_msg 0x8f8f7f;
 
     local ctr msg;
         frame_start;
@@ -20,7 +21,7 @@ fn boneless_chacha20() -> Program {
         push 2;
         store ctr;
 
-        push 31;
+        push c_init_msg;
         store msg;
     inner loop;
         load msg;
@@ -78,7 +79,7 @@ fn boneless_chacha20() -> Program {
          load msg;
          xor;
 
-         addi magic_val;
+         addi c_magic_val;
          store msg;
 
          frame_end;
@@ -89,9 +90,13 @@ fn boneless_chacha20() -> Program {
 fn main() {
     let mut program = boneless_chacha20();
     let binary = match program.assemble() {
-        Err(err) => {
-            panic!("assembly errors: {:?}", err);
-        },
+        Err(errors) => {
+            panic!("assembly errors: \n{}\n", errors
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<String>>()
+                .join("\n"));
+        }
         Ok(bin) => bin
     };
     let mut machine = Machine::new();

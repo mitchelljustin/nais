@@ -4,7 +4,7 @@ use std::fmt;
 
 use crate::assemble::AssemblyError::UnrelocatedInstruction;
 use crate::constants::CODE_START;
-use crate::isa::{Encoder, Inst};
+use crate::isa::{Encoder, Inst, OP_INVALID};
 
 macro_rules! parse_asm_line {
     ( $p:ident label $label:ident ) => {
@@ -94,8 +94,19 @@ pub struct Program {
 
 #[derive(Clone, Debug)]
 pub enum AssemblyError {
-    UnrelocatedInstruction(usize, String),
+    UnrelocatedInstruction(Inst, String),
     NoSuchOp(usize, String),
+}
+
+impl Display for AssemblyError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            UnrelocatedInstruction(inst, target) => {
+                write!(f, "UnrelocatedInstruction({} \"{}\")", inst, target)
+            },
+            other => write!(f, "{:?}", other)
+        }
+    }
 }
 
 impl Program {
@@ -127,6 +138,12 @@ impl Program {
             None => {
                 self.errors.push(AssemblyError::NoSuchOp(
                     loc, String::from(opname)));
+                self.instructions.push(Inst{
+                    opcode: 0x00,
+                    op: OP_INVALID,
+                    arg,
+                    addr,
+                });
                 return;
             }
             Some(inst) => inst
@@ -229,8 +246,8 @@ impl Program {
                 continue;
             }
             // Global variable
-            if let Some(global_loc) = self.global_vars.get(target) {
-                inst.arg = *global_loc;
+            if let Some(&global_loc) = self.global_vars.get(target) {
+                inst.arg = global_loc;
                 continue;
             }
             // Local scope
@@ -246,8 +263,8 @@ impl Program {
                 continue;
             }
             // Local frame var
-            if let Some(frame_offset) = scope_entry.frame_labels.get(target) {
-                inst.arg = *frame_offset;
+            if let Some(&frame_offset) = scope_entry.frame_labels.get(target) {
+                inst.arg = frame_offset;
                 continue;
             }
             unrelocated.push((*inst_loc, target.clone()));
@@ -262,7 +279,8 @@ impl Program {
             .collect::<Vec<AssemblyError>>();
         errors.extend(
             self.reloc_tab.iter()
-                .map(|(loc, target)| UnrelocatedInstruction(*loc, target.clone()))
+                .map(|(loc, target)|
+                    UnrelocatedInstruction(self.instructions[*loc], target.clone()))
         );
         if !errors.is_empty() {
             return Err(errors);

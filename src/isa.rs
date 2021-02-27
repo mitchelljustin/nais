@@ -117,7 +117,7 @@ pub fn extend(m: &mut Machine, amt: i32) {
     m.extend(amt);
 }
 
-pub fn err(m: &mut Machine, _: i32) {
+pub fn invld(m: &mut Machine, _: i32) {
     m.status = MachineStatus::Error(MachineError::InvalidInstruction);
 }
 
@@ -235,7 +235,7 @@ macro_rules! register_ops {
 }
 
 register_ops!(
-    err
+    invld
     push extend drop swap
     add sub mul div rem and or xor
     addi subi muli divi remi andi ori xori
@@ -245,6 +245,8 @@ register_ops!(
     jump jal ret exit
     breakp print
 );
+
+pub const OP_INVALID: &'static Op = &OPLIST[0];
 
 #[derive(Clone)]
 pub struct Encoder {
