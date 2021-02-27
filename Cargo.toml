@@ -1,5 +1,5 @@
 [package]
-name = "riscv-rust"
+name = "nais"
 version = "0.1.0"
 authors = ["mitchelljustin <8631205+mitchelljustin@users.noreply.github.com>"]
 edition = "2018"
