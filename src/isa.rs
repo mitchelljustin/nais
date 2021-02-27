@@ -25,7 +25,9 @@ impl Display for Inst {
             None => String::new(),
             Some(addr) => format!("{:x}", addr)
         };
-        write!(f, "{} <{:02x}> {:6} {:8x} [{}]", addr, self.opcode, self.op.name, self.arg, self.arg)
+        let arg_trunc = self.arg & 0xffffff;
+        write!(f, "{} <{:02x}> {:6} {:6x} [{}]",
+               addr, self.opcode, self.op.name, arg_trunc, self.arg)
     }
 }
 
@@ -42,10 +44,8 @@ pub fn push(m: &mut Machine, x: i32) {
     m.push(x);
 }
 
-pub fn drop(m: &mut Machine, n: i32) {
-    for _ in 0..n {
-        m.pop();
-    }
+pub fn drop(m: &mut Machine, amt: i32) {
+    m.drop(amt);
 }
 
 pub fn swap(m: &mut Machine, _: i32) {
@@ -80,9 +80,9 @@ pub fn print(m: &mut Machine, _: i32) {
 
 pub fn exit(m: &mut Machine, code: i32) {
     if code == 0 {
-        m.status = Stopped;
+        m.set_status(Stopped);
     } else {
-        m.status = MachineStatus::Error(MachineError::ProgramExit(code))
+        m.set_status(MachineStatus::Error(MachineError::ProgramExit(code)));
     }
 }
 
@@ -118,7 +118,7 @@ pub fn extend(m: &mut Machine, amt: i32) {
 }
 
 pub fn invld(m: &mut Machine, _: i32) {
-    m.status = MachineStatus::Error(MachineError::InvalidInstruction);
+    m.set_status(MachineStatus::Error(MachineError::InvalidInstruction));
 }
 
 macro_rules! with_overflow {

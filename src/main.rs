@@ -13,7 +13,7 @@ mod constants;
 fn boneless_chacha20() -> Program {
     program_from_asm! {
     const c_magic_val 0x8ab3ce;
-    const c_init_msg 0x8f8f7f;
+    const c_init_msg 9408383;
 
     local ctr msg;
         frame_start;
@@ -65,44 +65,49 @@ fn boneless_chacha20() -> Program {
     label qround;
     arg msg;
     local x;
-         frame_start;
+        frame_start;
 
-         load msg;
-         shl 8;
-         store x;
+        load msg;
+        shl 8;
+        store x;
 
-         load msg;
-         shr 24;
-         load x;
-         or;
+        load msg;
+        shr 24;
+        load x;
+        or;
 
-         load msg;
-         xor;
+        load msg;
+        xor;
 
-         addi c_magic_val;
-         store msg;
+        addi c_magic_val;
+        store msg;
 
-         frame_end;
-         ret;
+        frame_end;
+        ret;
     }
 }
 
 fn main() {
-    let mut program = boneless_chacha20();
-    let binary = match program.assemble() {
-        Err(errors) => {
-            panic!("assembly errors: \n{}\n", errors
-                .iter()
-                .map(|e| e.to_string())
-                .collect::<Vec<String>>()
-                .join("\n"));
+    let binary = {
+        let mut program = boneless_chacha20();
+        match program.assemble() {
+            Err(errors) => {
+                panic!("assembly errors: \n{}\n", errors
+                    .iter()
+                    .map(|e| e.to_string())
+                    .collect::<Vec<String>>()
+                    .join("\n"));
+            }
+            Ok(bin) => {
+                println!("Program:\n{}", program);
+                bin
+            }
         }
-        Ok(bin) => bin
     };
     let mut machine = Machine::new();
-    machine.load_code(&binary);
+    machine.copy_code(&binary);
     machine.run();
     println!();
     println!("Result: {:?}", machine);
-    println!("{}",machine.stack_dump());
+    println!("{}", machine.stack_dump());
 }

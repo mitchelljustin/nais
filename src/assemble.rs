@@ -3,7 +3,7 @@ use std::fmt::{Display, Formatter};
 use std::fmt;
 
 use crate::assemble::AssemblyError::UnrelocatedInstruction;
-use crate::constants::CODE_START;
+use crate::constants::SEG_CODE_START;
 use crate::isa::{Encoder, Inst, OP_INVALID};
 
 macro_rules! parse_asm_line {
@@ -133,7 +133,7 @@ impl Program {
 
     pub fn add_inst(&mut self, opname: &str, arg: i32) {
         let loc = self.instructions.len();
-        let addr = Some(CODE_START + loc as i32);
+        let addr = Some(SEG_CODE_START + loc as i32);
         let inst = match self.encoder.make_inst(opname, arg) {
             None => {
                 self.errors.push(AssemblyError::NoSuchOp(
@@ -274,9 +274,9 @@ impl Program {
 
     pub fn assemble(&mut self) -> Result<Vec<i32>, Vec<AssemblyError>> {
         self.relocate();
-        let mut errors = self.errors
+        let mut errors: Vec<AssemblyError> = self.errors
             .drain(..)
-            .collect::<Vec<AssemblyError>>();
+            .collect();
         errors.extend(
             self.reloc_tab.iter()
                 .map(|(loc, target)|
