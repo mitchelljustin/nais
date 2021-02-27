@@ -13,13 +13,19 @@ pub struct Op {
 
 #[derive(Debug, Clone, Copy)]
 pub struct Inst {
+    pub addr: Option<i32>,
     pub op: &'static Op,
+    pub opcode: u8,
     pub arg: i32,
 }
 
 impl Display for Inst {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        write!(f, "{:6} {:8x} [{}]", self.op.name, self.arg, self.arg)
+        let addr = match self.addr {
+            None => String::new(),
+            Some(addr) => format!("{:x}", addr)
+        };
+        write!(f, "{} <{:02x}> {:6} {:8x} [{}]", addr, self.opcode, self.op.name, self.arg, self.arg)
     }
 }
 
@@ -55,14 +61,12 @@ pub fn store(m: &mut Machine, offset: i32) {
 }
 
 pub fn breakp(m: &mut Machine, _: i32) {
-    println!("<<BREAKPOINT START>>");
-    println!("{}", m.stack_dump());
-    println!("<<BREAKPOINT END>>");
+    println!("<<BREAKPOINT>>\n{}", m.stack_dump());
 }
 
 pub fn print(m: &mut Machine, _: i32) {
     if let Some(x) = m.pop() {
-        println!("{:08x} [{}]", x, x);
+        println!("\n>> {:08x} [{}]\n", x, x);
         m.push(x);
     }
 }
@@ -77,6 +81,10 @@ pub fn exit(m: &mut Machine, code: i32) {
 
 pub fn jal(m: &mut Machine, offset: i32) {
     m.pushpc();
+    m.jump(offset);
+}
+
+pub fn jump(m: &mut Machine, offset: i32) {
     m.jump(offset);
 }
 
@@ -106,23 +114,27 @@ pub fn extend(m: &mut Machine, amt: i32) {
     m.extend(amt);
 }
 
+pub fn err(m: &mut Machine, _: i32) {
+    m.status = MachineStatus::Error(MachineError::InvalidInstruction);
+}
+
 macro_rules! with_overflow {
-        ($top:ident $op:tt $arg:ident) => {
-            (($top as i64) $op ($arg as i64)) as i32
-        };
-    }
+    ($top:ident $op:tt $arg:ident) => {
+        (($top as i64) $op ($arg as i64)) as i32
+    };
+}
 
 macro_rules! binary_op_funcs {
-        ( $($name:ident ($operator:tt));+; ) => {
-            $(
-                pub fn $name(m: &mut Machine, _: i32) {
-                    if let (Some(top), Some(sec)) = (m.pop(), m.pop()) {
-                        m.push(with_overflow!(top $operator sec));
-                    }
+    ( $($name:ident ($operator:tt));+; ) => {
+        $(
+            pub fn $name(m: &mut Machine, _: i32) {
+                if let (Some(top), Some(sec)) = (m.pop(), m.pop()) {
+                    m.push(with_overflow!(top $operator sec));
                 }
-            )+
-        }
+            }
+        )+
     }
+}
 
 binary_op_funcs! {
         add ( + );
@@ -136,27 +148,27 @@ binary_op_funcs! {
     }
 
 macro_rules! binary_op_imm_funcs {
-        ( $($name:ident ($operator:tt));+; ) => {
-            $(
-                pub fn $name(m: &mut Machine, arg: i32) {
-                    if let Some(top) = m.pop() {
-                        m.push(with_overflow!(top $operator arg));
-                    }
+    ( $($name:ident ($operator:tt));+; ) => {
+        $(
+            pub fn $name(m: &mut Machine, arg: i32) {
+                if let Some(top) = m.pop() {
+                    m.push(with_overflow!(top $operator arg));
                 }
-            )+
-        }
+            }
+        )+
     }
+}
 
 binary_op_imm_funcs! {
-        addi ( + );
-        subi ( - );
-        muli ( * );
-        divi ( / );
-        remi ( % );
-        andi ( & );
-        ori  ( | );
-        xori ( ^ );
-    }
+    addi ( + );
+    subi ( - );
+    muli ( * );
+    divi ( / );
+    remi ( % );
+    andi ( & );
+    ori  ( | );
+    xori ( ^ );
+}
 
 macro_rules! branch_cmp_funcs {
         ( $($name:ident ($cmp:tt));+; ) => {
@@ -173,11 +185,11 @@ macro_rules! branch_cmp_funcs {
     }
 
 branch_cmp_funcs! {
-        beq ( == );
-        bne ( != );
-        blt ( < );
-        bge ( >= );
-    }
+    beq ( == );
+    bne ( != );
+    blt ( < );
+    bge ( >= );
+}
 
 pub fn sar(m: &mut Machine, shamt: i32) {
     if let Some(top) = m.pop() {
@@ -202,17 +214,13 @@ macro_rules! logical_shift_funcs {
     }
 
 logical_shift_funcs! {
-        shl ( << );
-        shr ( >> );
-    }
+    shl ( << );
+    shr ( >> );
+}
 
 macro_rules! register_ops {
     ( $($name:ident)+ ) => {
         pub const OPLIST: &'static [Op] = &[
-            Op {
-                name: "invalid",
-                f: |_, _| panic!("INVALID OP")
-            },
             $(
                 Op {
                     name: stringify!($name),
@@ -224,14 +232,15 @@ macro_rules! register_ops {
 }
 
 register_ops!(
+    err
     push pop extend
-    add sub mul div rem and or  xor
+    add sub mul div rem and or xor
     addi subi muli divi remi andi ori xori
     sar shl shr
     beq bne blt bge
     load store
     aload astore setfp
-    jal ret
+    jump jal ret
     exit breakp
     print
 );
@@ -267,7 +276,7 @@ impl Encoder {
         *self.op_to_opcode.get(op.name).unwrap()
     }
 
-    pub fn op_for_opcode(&self, opcode: u8) -> &'static Op {
-        self.opcode_to_op.get(&opcode).unwrap().clone()
+    pub fn op_for_opcode(&self, opcode: u8) -> Option<&'static Op> {
+        self.opcode_to_op.get(&opcode).map(|op| *op)
     }
 }

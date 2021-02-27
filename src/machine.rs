@@ -1,17 +1,19 @@
-use std::fmt::{Debug, Formatter, Result, Write};
+use std::fmt;
+use std::fmt::{Debug, Formatter, Write};
 
 use MachineStatus::*;
 
-use crate::assemble::Program;
 use std::iter;
-use crate::isa::Encoder;
+use crate::isa::{Encoder,  Inst};
+use crate::constants::{CODE_START, CODE_MAX_LEN, MAX_CYCLES, PC_ADDR, SP_ADDR, FP_ADDR, INIT_STACK};
 
-const MAX_CYCLES: usize = 10_000;
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum MachineError {
     EmptyStackPop,
-    PCOutOfBounds,
+    CodeSegFault,
+    InvalidInstruction,
+    NoSuchOpcode(i32),
     StackIndexOutOfBounds,
     StackIndexNegative,
     ProgramExit(i32),
@@ -27,7 +29,7 @@ pub enum MachineStatus {
 }
 
 pub struct Machine {
-    program_mem: Vec<i32>,
+    code_mem: Vec<i32>,
     pub stack: Vec<i32>,
     pub status: MachineStatus,
     pub ncycles: usize,
@@ -35,7 +37,7 @@ pub struct Machine {
 }
 
 impl Debug for Machine {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("Machine")
             .field("status", &self.status)
             .field("ncycles", &self.ncycles)
@@ -43,20 +45,28 @@ impl Debug for Machine {
     }
 }
 
-const PC_ADDR: i32 = 0;
-const SP_ADDR: i32 = 1;
-const FP_ADDR: i32 = 2;
-
-const CODE_START: i32 = 0x1_0000;
 
 impl Machine {
-    pub fn new(program: &Program) -> Machine {
+    pub fn new() -> Machine {
         Machine {
-            program_mem: program.as_binary(),
-            stack: vec![CODE_START, 4, 4, 0xbbbbbb], // PC, SP, FP, boundary
+            code_mem: vec![0; CODE_MAX_LEN],
+            stack: Vec::from(INIT_STACK), // PC, SP, FP, boundary
             status: Idle,
             ncycles: 0,
             encoder: Encoder::new(),
+        }
+    }
+
+    pub fn load_code(&mut self, bin_code: &[i32]) {
+        for (i, inst) in bin_code.iter().enumerate() {
+            self.code_mem[i] = *inst;
+        }
+    }
+
+    pub fn run(&mut self) {
+        self.status = Running;
+        while self.status == Running {
+            self.cycle()
         }
     }
 
@@ -183,33 +193,53 @@ impl Machine {
         out
     }
 
-    pub fn run(&mut self) {
-        self.status = Running;
-        while self.status == Running {
-            self.cycle()
-        }
-    }
-
     fn cycle(&mut self) {
         let pc = self.getpc();
-        let pmem_addr = (pc - CODE_START) as usize;
-        if pmem_addr >= self.program_mem.len() {
-            self.status = Error(MachineError::PCOutOfBounds);
-            return;
-        }
-        let inst = self.program_mem[pmem_addr];
-        let opcode = ((inst >> 24) & 0xff) as u8;
-        let mut arg = inst & 0xffffff;
-        if arg >> 23 != 0 {
-            // sign extend
-            arg |= 0xff000000;
-        }
-        let op = self.encoder.op_for_opcode(opcode);
-        (op.f)(self, arg);
+        let inst = match self.inst_at_addr(pc) {
+            Err(e) => {
+                self.status = Error(e);
+                return
+            },
+            Ok(inst) => inst
+        };
+        println!("{:<5} {}", self.ncycles, inst);
+        (inst.op.f)(self, inst.arg);
         self.jump(1);
         self.ncycles += 1;
         if self.ncycles == MAX_CYCLES {
             self.status = Error(MachineError::MaxCyclesReached);
         }
+    }
+
+    fn inst_at_addr(&mut self, addr: i32) -> Result<Inst, MachineError> {
+        if addr < CODE_START || addr >= (CODE_START + CODE_MAX_LEN as i32) {
+            return Err(MachineError::CodeSegFault);
+        }
+        let inst_addr = (addr - CODE_START) as usize;
+        let bin_inst = self.code_mem[inst_addr];
+        match self.decode_bin_inst(bin_inst) {
+            None => Err(MachineError::NoSuchOpcode(bin_inst)),
+            Some(inst) => Ok(Inst{
+                addr: Some(addr),
+                ..inst
+            })
+        }
+    }
+
+    fn decode_bin_inst(&mut self, bin_inst: i32) -> Option<Inst> {
+        let opcode = ((bin_inst >> 24) & 0xff) as u8;
+        let mut arg = bin_inst & 0xffffff;
+        if arg >> 23 != 0 {
+            // sign extend
+            arg |= 0xff000000;
+        }
+        let op = match self.encoder.op_for_opcode(opcode) {
+            None => return None,
+            Some(op) => op
+        };
+        Some(Inst{
+            addr: None,
+            opcode, op, arg
+        })
     }
 }

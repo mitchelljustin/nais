@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter, Result};
 
-use crate::isa::{Inst, Encoder};
+use crate::isa::{Encoder, Inst};
+use crate::constants::CODE_START;
 
 macro_rules! parse_asm_line {
     ( $p:ident label $label:ident ) => {
@@ -13,15 +14,21 @@ macro_rules! parse_asm_line {
     ( $p:ident global $label:ident $loc:literal ) => {
         $p.add_global_var(stringify!($label), $loc);
     };
-    ( $p:ident arg $label:ident ) => {
-        $p.add_arg_var(stringify!($label));
+    ( $p:ident arg $($label:ident)+ ) => {
+        $(
+            $p.add_arg_var(stringify!($label));
+        )+
     };
-    ( $p:ident local $label:ident ) => {
-        $p.add_local_var(stringify!($label));
+    ( $p:ident local $($label:ident)+ ) => {
+        $(
+            $p.add_local_var(stringify!($label));
+        )+
     };
-    ( $p:ident mov $dest:ident $src:ident ) => {
-        parse_asm_line!($p load $src);
-        parse_asm_line!($p store $dest);
+    ( $p:ident frame_start ) => {
+         $p.start_frame();
+    };
+    ( $p:ident frame_end ) => {
+         $p.end_frame();
     };
     ( $p:ident $mnem:ident $label:ident ) => {
         $p.add_placeholder_inst(stringify!($mnem), stringify!($label));
@@ -50,12 +57,12 @@ macro_rules! assemble {
 
 impl Display for Program {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        for (i, inst) in self.code.iter().enumerate() {
-            if let Err(e) = write!(f, "1 {:04x} {}\n", i, inst) {
-                return Err(e);
-            }
-        }
-        Ok(())
+        f.write_str(&self.code
+            .iter()
+            .map(|inst| inst.to_string())
+            .collect::<Vec<String>>()
+            .join("\n")
+        )
     }
 }
 
@@ -101,8 +108,12 @@ impl Program {
 
     pub fn add_inst(&mut self, opname: &str, arg: i32) {
         let op = self.encoder.op_with_name(opname);
+        let opcode = self.encoder.opcode_for_op(op) as u8;
+        let addr = Some(CODE_START + self.code.len() as i32);
         self.code.push(Inst {
+            addr,
             op,
+            opcode,
             arg,
         });
         self.inst_context.push(self.cur_label.clone());
@@ -159,6 +170,20 @@ impl Program {
         label_entry.nargs += 1;
     }
 
+    pub fn start_frame(&mut self) {
+        self.add_placeholder_inst("aload", "fp");
+        self.add_placeholder_inst("aload", "sp");
+        self.add_placeholder_inst("astore", "fp");
+        let extend_sz = self.cur_label_entry().nlocals;
+        self.add_inst("extend", extend_sz);
+    }
+
+    pub fn end_frame(&mut self) {
+        let pop_sz = self.cur_label_entry().nlocals;
+        self.add_inst("pop", pop_sz);
+        self.add_placeholder_inst("astore", "fp");
+    }
+
     pub fn relocate_all(&mut self) {
         for (inst_loc, name) in self.reloc_tab.iter() {
             let inst = &mut self.code[*inst_loc as usize];
@@ -188,7 +213,7 @@ impl Program {
 
     pub fn as_binary(&self) -> Vec<i32> {
         self.code.iter().map(|inst| {
-            let opcode = self.encoder.opcode_for_op(inst.op) as i32;
+            let opcode = inst.opcode as i32;
             let arg_part = inst.arg & 0xffffff;
             let bin_inst = (opcode << 24) | (arg_part);
             bin_inst

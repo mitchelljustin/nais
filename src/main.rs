@@ -8,7 +8,9 @@ use crate::assemble::Program;
 mod assemble;
 mod machine;
 mod isa;
+mod constants;
 
+#[allow(dead_code)]
 fn calc152n() -> Program {
     assemble! {
     label main;
@@ -40,21 +42,21 @@ fn calc152n() -> Program {
 }
 fn boneless_chacha20() -> Program {
     assemble! {
-    label main;
-    local loop_ctr;
-    local a;
-        extend 2;
+    local loop_ctr a;
+        frame_start;
 
-        push 20;
+        push 32;
         store loop_ctr;
 
-        push 15;
+        push 31;
         store a;
     inner cnt_loop;
+        load a;
         load a;
         jal qround;
         print;
         store a;
+        pop 1;
 
         load loop_ctr;
         subi 1;
@@ -64,30 +66,41 @@ fn boneless_chacha20() -> Program {
         push 0;
         bne cnt_loop;
 
+        frame_end;
         exit;
+
     label qround;
-    arg a; local x;
-         aload fp;
-         aload sp;
-         astore fp;
-         extend 1;
+    arg a b;
+    local x;
+         frame_start;
 
          load a;
-         muli 2;
+         shl 8;
+         store x;
+
+         load b;
+         shr 24;
+         load x;
+         or;
+
+         load a;
+         xor;
+
+         addi 0xf389ab71;
          store a;
 
-         pop 1;
-         astore fp;
+         frame_end;
          ret;
     }
 }
 
 fn main() {
     let program = boneless_chacha20();
-    println!("Program: \n{:}", program);
-    let mut machine = Machine::new(&program);
+    let binary = program.as_binary();
+    let mut machine = Machine::new();
+    machine.load_code(&binary);
     machine.run();
+    println!();
     println!("Result: {:?}", machine);
-    println!("<<Stack dump>>");
     println!("{}",machine.stack_dump());
 }
