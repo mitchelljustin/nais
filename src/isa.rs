@@ -82,7 +82,7 @@ pub fn jal(m: &mut Machine, offset: i32) {
 
 pub fn ret(m: &mut Machine, _: i32) {
     if let Some(loc) = m.pop() {
-        m.setpc(loc - 1);
+        m.setpc(loc);
     }
 }
 
