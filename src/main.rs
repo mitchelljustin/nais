@@ -12,7 +12,7 @@ mod constants;
 
 #[allow(dead_code)]
 fn calc152n() -> Program {
-    assemble! {
+    program_from_asm! {
     label main;
     local loop_ctr;
     local n;
@@ -23,7 +23,7 @@ fn calc152n() -> Program {
 
         push 15;
         store n;
-    inner cnt_loop;
+    inner loop;
         load n;
         print;
         muli 2;
@@ -35,28 +35,26 @@ fn calc152n() -> Program {
 
         load loop_ctr;
         push 0;
-        bne cnt_loop;
+        bne loop;
 
         exit;
     }
 }
 fn boneless_chacha20() -> Program {
-    assemble! {
+    program_from_asm! {
     local loop_ctr a;
         frame_start;
 
-        push 32;
+        push 2;
         store loop_ctr;
 
         push 31;
         store a;
-    inner cnt_loop;
+    inner loop;
         load a;
-        load a;
-        jal qround;
+        jal round;
         print;
         store a;
-        pop 1;
 
         load loop_ctr;
         subi 1;
@@ -64,13 +62,35 @@ fn boneless_chacha20() -> Program {
 
         load loop_ctr;
         push 0;
-        bne cnt_loop;
+        bne loop;
 
         frame_end;
         exit;
 
+    label round;
+    arg a;
+    local cnt;
+        frame_start;
+
+        push 4;
+        store cnt;
+    inner loop;
+        load a;
+        jal qround;
+        store a;
+
+        load cnt;
+        subi 1;
+        store cnt;
+        load cnt;
+        push 0;
+        bne loop;
+
+        frame_end;
+        ret;
+
     label qround;
-    arg a b;
+    arg a;
     local x;
          frame_start;
 
@@ -78,7 +98,7 @@ fn boneless_chacha20() -> Program {
          shl 8;
          store x;
 
-         load b;
+         load a;
          shr 24;
          load x;
          or;
@@ -95,8 +115,13 @@ fn boneless_chacha20() -> Program {
 }
 
 fn main() {
-    let program = boneless_chacha20();
-    let binary = program.as_binary();
+    let mut program = boneless_chacha20();
+    let binary = match program.assemble() {
+        Err(err) => {
+            panic!("assembly errors: {:?}", err);
+        },
+        Ok(bin) => bin
+    };
     let mut machine = Machine::new();
     machine.load_code(&binary);
     machine.run();

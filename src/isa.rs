@@ -42,9 +42,16 @@ pub fn push(m: &mut Machine, x: i32) {
     m.push(x);
 }
 
-pub fn pop(m: &mut Machine, n: i32) {
+pub fn drop(m: &mut Machine, n: i32) {
     for _ in 0..n {
         m.pop();
+    }
+}
+
+pub fn swap(m: &mut Machine, _: i32) {
+    if let (Some(top), Some(sec)) = (m.pop(), m.pop()) {
+        m.push(top);
+        m.push(sec);
     }
 }
 
@@ -104,10 +111,6 @@ pub fn astore(m: &mut Machine, loc: i32) {
     if let Some(x) = m.pop() {
         m.store_abs(loc, x);
     }
-}
-
-pub fn setfp(m: &mut Machine, _: i32) {
-    m.setfp();
 }
 
 pub fn extend(m: &mut Machine, amt: i32) {
@@ -233,16 +236,14 @@ macro_rules! register_ops {
 
 register_ops!(
     err
-    push pop extend
+    push extend drop swap
     add sub mul div rem and or xor
     addi subi muli divi remi andi ori xori
     sar shl shr
     beq bne blt bge
-    load store
-    aload astore setfp
-    jump jal ret
-    exit breakp
-    print
+    load store aload astore
+    jump jal ret exit
+    breakp print
 );
 
 #[derive(Clone)]
@@ -268,15 +269,42 @@ impl Encoder {
         enc
     }
 
-    pub fn op_with_name(&self, name: &str) -> &'static Op {
-        self.name_to_op.get(name).unwrap()
+    pub fn make_inst(&self, opname: &str, arg: i32) -> Option<Inst> {
+        match self.name_to_op.get(opname) {
+            None => return None,
+            Some(&op) => {
+                let opcode = *self.op_to_opcode.get(opname).unwrap();
+                Some(Inst{
+                    addr: None,
+                    op,
+                    opcode,
+                    arg,
+                })
+            }
+        }
     }
 
-    pub fn opcode_for_op(&self, op: &Op) -> u8 {
-        *self.op_to_opcode.get(op.name).unwrap()
+    pub fn encode(&self, inst: &Inst) -> i32 {
+        let opcode = inst.opcode as i32;
+        let arg_part = inst.arg & 0xffffff;
+        let bin_inst = (opcode << 24) | (arg_part);
+        bin_inst
     }
 
-    pub fn op_for_opcode(&self, opcode: u8) -> Option<&'static Op> {
-        self.opcode_to_op.get(&opcode).map(|op| *op)
+    pub fn decode(&self, bin_inst: i32) -> Option<Inst> {
+        let opcode = ((bin_inst >> 24) & 0xff) as u8;
+        let mut arg = bin_inst & 0xffffff;
+        if arg >> 23 != 0 {
+            // sign extend
+            arg |= 0xff000000;
+        }
+        let op = match self.opcode_to_op.get(&opcode) {
+            None => return None,
+            Some(op) => *op
+        };
+        Some(Inst{
+            addr: None,
+            opcode, op, arg
+        })
     }
 }

@@ -13,7 +13,7 @@ pub enum MachineError {
     EmptyStackPop,
     CodeSegFault,
     InvalidInstruction,
-    NoSuchOpcode(i32),
+    CannotDecodeInstruction(i32),
     StackIndexOutOfBounds,
     StackIndexNegative,
     ProgramExit(i32),
@@ -174,10 +174,6 @@ impl Machine {
         }
     }
 
-    pub fn setfp(&mut self) {
-        *self.fp() = *self.sp();
-    }
-
     pub fn stack_dump(&self) -> String {
         let mut out = String::new();
         for (i, x) in self.stack.iter().enumerate() {
@@ -217,8 +213,8 @@ impl Machine {
         }
         let inst_addr = (addr - CODE_START) as usize;
         let bin_inst = self.code_mem[inst_addr];
-        match self.decode_bin_inst(bin_inst) {
-            None => Err(MachineError::NoSuchOpcode(bin_inst)),
+        match self.encoder.decode(bin_inst) {
+            None => Err(MachineError::CannotDecodeInstruction(bin_inst)),
             Some(inst) => Ok(Inst{
                 addr: Some(addr),
                 ..inst
@@ -226,20 +222,4 @@ impl Machine {
         }
     }
 
-    fn decode_bin_inst(&mut self, bin_inst: i32) -> Option<Inst> {
-        let opcode = ((bin_inst >> 24) & 0xff) as u8;
-        let mut arg = bin_inst & 0xffffff;
-        if arg >> 23 != 0 {
-            // sign extend
-            arg |= 0xff000000;
-        }
-        let op = match self.encoder.op_for_opcode(opcode) {
-            None => return None,
-            Some(op) => op
-        };
-        Some(Inst{
-            addr: None,
-            opcode, op, arg
-        })
-    }
 }
