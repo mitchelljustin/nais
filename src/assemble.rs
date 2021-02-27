@@ -16,6 +16,9 @@ macro_rules! parse_asm_line {
     ( $p:ident global $label:ident $loc:literal ) => {
         $p.add_global_var(stringify!($label), $loc);
     };
+    ( $p:ident const $name:ident $value:literal ) => {
+        $p.add_constant(stringify!($name), $value);
+    };
     ( $p:ident arg $($label:ident)+ ) => {
         $(
             $p.add_arg_var(stringify!($label));
@@ -81,6 +84,7 @@ pub struct Program {
     instructions: Vec<Inst>,
     scope_labels: HashMap<String, LabelEntry>,
     global_vars: HashMap<String, i32>,
+    constants: HashMap<String, i32>,
     inst_scope: Vec<String>,
     cur_scope_label: String,
     reloc_tab: Vec<(usize, String)>,
@@ -100,6 +104,7 @@ impl Program {
             instructions: Vec::new(),
             scope_labels: HashMap::new(),
             global_vars: HashMap::new(),
+            constants: HashMap::new(),
             inst_scope: Vec::new(),
             reloc_tab: Vec::new(),
             cur_scope_label: String::new(),
@@ -187,6 +192,10 @@ impl Program {
         label_entry.nargs += 1;
     }
 
+    pub fn add_constant(&mut self, name: &str, value: i32) {
+        self.constants.insert(String::from(name), value);
+    }
+
     pub fn start_frame(&mut self) {
         self.add_placeholder_inst("aload", "fp");
         self.add_placeholder_inst("aload", "sp");
@@ -206,7 +215,12 @@ impl Program {
         for (inst_loc, target) in self.reloc_tab.iter() {
             let inst = &mut self.instructions[*inst_loc];
 
-            // Code relocation
+            // Constant
+            if let Some(&value) = self.constants.get(target) {
+                inst.arg = value;
+                continue;
+            }
+            // Code label
             if let Some(label_entry) = self.scope_labels.get(target) {
                 inst.arg = Program::calc_pc_offset(
                     label_entry.code_loc,
@@ -214,12 +228,12 @@ impl Program {
                 );
                 continue;
             }
-            // Global variable relocation
+            // Global variable
             if let Some(global_loc) = self.global_vars.get(target) {
                 inst.arg = *global_loc;
                 continue;
             }
-            // Local scope relocation
+            // Local scope
             let scope_label = &self.inst_scope[*inst_loc];
             let scope_entry = self.scope_labels.get(scope_label).unwrap();
             let inner_label_name = Program::make_inner_label(scope_label, target);

@@ -1,12 +1,11 @@
 use std::fmt;
 use std::fmt::{Debug, Formatter, Write};
+use std::iter;
 
 use MachineStatus::*;
 
-use std::iter;
-use crate::isa::{Encoder,  Inst};
-use crate::constants::{CODE_START, CODE_MAX_LEN, MAX_CYCLES, PC_ADDR, SP_ADDR, FP_ADDR, INIT_STACK};
-
+use crate::constants::{BOUNDARY_ADDR, CODE_MAX_LEN, CODE_START, FP_ADDR, INIT_STACK, MAX_CYCLES, PC_ADDR, SP_ADDR};
+use crate::isa::{Encoder, Inst};
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum MachineError {
@@ -50,7 +49,7 @@ impl Machine {
     pub fn new() -> Machine {
         Machine {
             code_mem: vec![0; CODE_MAX_LEN],
-            stack: Vec::from(INIT_STACK), // PC, SP, FP, boundary
+            stack: Vec::from(INIT_STACK),
             status: Idle,
             ncycles: 0,
             encoder: Encoder::new(),
@@ -66,7 +65,7 @@ impl Machine {
     pub fn run(&mut self) {
         self.status = Running;
         while self.status == Running {
-            self.cycle()
+            self.cycle();
         }
     }
 
@@ -177,11 +176,11 @@ impl Machine {
     pub fn stack_dump(&self) -> String {
         let mut out = String::new();
         for (i, x) in self.stack.iter().enumerate() {
-            let extra = match i {
-                0 => "pc",
-                1 => "sp",
-                2 => "fp",
-                3 => "boundary",
+            let extra = match i as i32 {
+                PC_ADDR => "pc",
+                SP_ADDR => "sp",
+                FP_ADDR => "fp",
+                BOUNDARY_ADDR => "boundary",
                 _ => ""
             };
             write!(out, "{:02x}. {:8x} [{:8}] {}\n", i, x, x, extra).unwrap();

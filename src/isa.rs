@@ -300,7 +300,7 @@ impl Encoder {
         }
         let op = match self.opcode_to_op.get(&opcode) {
             None => return None,
-            Some(op) => *op
+            Some(&op) => op
         };
         Some(Inst{
             addr: None,

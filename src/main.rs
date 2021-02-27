@@ -10,57 +10,29 @@ mod machine;
 mod isa;
 mod constants;
 
-#[allow(dead_code)]
-fn calc152n() -> Program {
-    program_from_asm! {
-    label main;
-    local loop_ctr;
-    local n;
-        extend 2;
-
-        push 20;
-        store loop_ctr;
-
-        push 15;
-        store n;
-    inner loop;
-        load n;
-        print;
-        muli 2;
-        store n;
-
-        load loop_ctr;
-        subi 1;
-        store loop_ctr;
-
-        load loop_ctr;
-        push 0;
-        bne loop;
-
-        exit;
-    }
-}
 fn boneless_chacha20() -> Program {
     program_from_asm! {
-    local loop_ctr a;
+    const magic_val 0x8ab3ce;
+
+    local ctr msg;
         frame_start;
 
         push 2;
-        store loop_ctr;
+        store ctr;
 
         push 31;
-        store a;
+        store msg;
     inner loop;
-        load a;
+        load msg;
         jal round;
         print;
-        store a;
+        store msg;
 
-        load loop_ctr;
+        load ctr;
         subi 1;
-        store loop_ctr;
+        store ctr;
 
-        load loop_ctr;
+        load ctr;
         push 0;
         bne loop;
 
@@ -68,16 +40,16 @@ fn boneless_chacha20() -> Program {
         exit;
 
     label round;
-    arg a;
+    arg msg;
     local cnt;
         frame_start;
 
         push 4;
         store cnt;
     inner loop;
-        load a;
+        load msg;
         jal qround;
-        store a;
+        store msg;
 
         load cnt;
         subi 1;
@@ -90,24 +62,24 @@ fn boneless_chacha20() -> Program {
         ret;
 
     label qround;
-    arg a;
+    arg msg;
     local x;
          frame_start;
 
-         load a;
+         load msg;
          shl 8;
          store x;
 
-         load a;
+         load msg;
          shr 24;
          load x;
          or;
 
-         load a;
+         load msg;
          xor;
 
-         addi 0xf389ab71;
-         store a;
+         addi magic_val;
+         store msg;
 
          frame_end;
          ret;
