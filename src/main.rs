@@ -10,6 +10,7 @@ mod machine;
 mod isa;
 mod constants;
 
+#[allow(dead_code)]
 fn boneless_chacha20() -> Program {
     program_from_asm! {
     const c_magic_val 0x8ab3ce;
@@ -87,9 +88,66 @@ fn boneless_chacha20() -> Program {
     }
 }
 
+fn array_on_stack() -> Program {
+    program_from_asm! {
+        local dummy;
+        array state 16;
+            frame_start;
+
+            push 16; // len
+            ldgi fp;
+            push state;
+            add;     // &arr
+            jal fill_array;
+            drop 2;
+
+            frame_end;
+
+            extend 20; // for debugging
+
+            exit;
+
+        label fill_array;
+        arg arr len;
+        local index x;
+            frame_start;
+
+            push 0;
+            stfi index;
+
+            push 1;
+            stfi x;
+
+        inner loop;
+            ldfi arr;
+            ldfi index;
+            add; // &arr[index]
+
+            ldfi x;
+            shl 1;
+            addi 1;
+            xori 0xf1f1f1;
+            stfi x;
+
+            ldfi x;
+            stgt; // arr[index] = x
+
+            ldfi index;
+            addi 1;
+            stfi index; // index += 1
+
+            ldfi index;
+            ldfi len;
+            blt loop; // if index < len goto loop
+
+            frame_end;
+            ret;
+    }
+}
+
 fn main() {
     let binary = {
-        let mut program = boneless_chacha20();
+        let mut program = array_on_stack();
         match program.assemble() {
             Err(errors) => {
                 panic!("assembly errors: \n{}\n", errors
@@ -104,6 +162,12 @@ fn main() {
             }
         }
     };
+    println!("Binary:\n{}", binary
+        .iter()
+        .enumerate()
+        .map(|(i, inst)| format!("{:04x} {:08x}", i, inst))
+        .collect::<Vec<_>>()
+        .join("\n"));
     let mut machine = Machine::new();
     machine.copy_code(&binary);
     machine.run();

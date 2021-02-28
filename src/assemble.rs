@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::fmt;
 
-use crate::assemble::AssemblyError::UnrelocatedInstruction;
+use crate::assemble::AssemblyError::UnrelocatedInst;
 use crate::constants::SEG_CODE_START;
 use crate::isa::{Encoder, Inst, OP_INVALID};
 
@@ -26,8 +26,11 @@ macro_rules! parse_asm_line {
     };
     ( $p:ident local $($label:ident)+ ) => {
         $(
-            $p.add_local_var(stringify!($label));
+            $p.add_local_var(stringify!($label), 1);
         )+
+    };
+    ( $p:ident array $label:ident $size:literal ) => {
+        $p.add_local_var(stringify!($label), $size);
     };
     ( $p:ident frame_start ) => {
          $p.start_frame();
@@ -73,7 +76,7 @@ macro_rules! program_from_asm {
 #[derive(Clone)]
 struct LabelEntry {
     code_loc: i32,
-    nlocals: i32,
+    local_size: i32,
     nargs: i32,
     frame_labels: HashMap<String, i32>,
 }
@@ -94,14 +97,14 @@ pub struct Program {
 
 #[derive(Clone, Debug)]
 pub enum AssemblyError {
-    UnrelocatedInstruction(Inst, String),
+    UnrelocatedInst(Inst, String),
     NoSuchOp(usize, String),
 }
 
 impl Display for AssemblyError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            UnrelocatedInstruction(inst, target) => {
+            UnrelocatedInst(inst, target) => {
                 write!(f, "UnrelocatedInstruction({} \"{}\")", inst, target)
             },
             other => write!(f, "{:?}", other)
@@ -173,7 +176,7 @@ impl Program {
         self.scope_labels.insert(String::from(name), LabelEntry {
             code_loc: self.instructions.len() as i32,
             frame_labels: HashMap::new(),
-            nlocals: 0,
+            local_size: 0,
             nargs: 0,
         });
     }
@@ -191,13 +194,13 @@ impl Program {
         );
     }
 
-    pub fn add_local_var(&mut self, name: &str) {
+    pub fn add_local_var(&mut self, name: &str, sz: i32) {
         let label_entry = self.cur_label_entry();
         label_entry.frame_labels.insert(
             String::from(name),
-            label_entry.nlocals,
+            label_entry.local_size,
         );
-        label_entry.nlocals += 1;
+        label_entry.local_size += sz;
     }
 
     pub fn add_arg_var(&mut self, name: &str) {
@@ -214,17 +217,17 @@ impl Program {
     }
 
     pub fn start_frame(&mut self) {
-        self.add_placeholder_inst("aload", "fp");
-        self.add_placeholder_inst("aload", "sp");
-        self.add_placeholder_inst("astore", "fp");
-        let extend_sz = self.cur_label_entry().nlocals;
+        self.add_placeholder_inst("ldgi", "fp");
+        self.add_placeholder_inst("ldgi", "sp");
+        self.add_placeholder_inst("stgi", "fp");
+        let extend_sz = self.cur_label_entry().local_size;
         self.add_inst("extend", extend_sz);
     }
 
     pub fn end_frame(&mut self) {
-        let drop_sz = self.cur_label_entry().nlocals;
+        let drop_sz = self.cur_label_entry().local_size;
         self.add_inst("drop", drop_sz);
-        self.add_placeholder_inst("astore", "fp");
+        self.add_placeholder_inst("stgi", "fp");
     }
 
     pub fn relocate(&mut self) {
@@ -280,7 +283,7 @@ impl Program {
         errors.extend(
             self.reloc_tab.iter()
                 .map(|(loc, target)|
-                    UnrelocatedInstruction(self.instructions[*loc], target.clone()))
+                    UnrelocatedInst(self.instructions[*loc], target.clone()))
         );
         if !errors.is_empty() {
             return Err(errors);

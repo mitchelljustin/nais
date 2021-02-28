@@ -55,15 +55,56 @@ pub fn swap(m: &mut Machine, _: i32) {
     }
 }
 
-pub fn load(m: &mut Machine, offset: i32) {
-    if let Some(x) = m.load(offset) {
+pub fn ldft(m: &mut Machine, extra_offset: i32) {
+    if let Some(offset) = m.pop() {
+        if let Some(val) = m.frame_load(offset + extra_offset) {
+            m.push(val);
+        }
+    }
+}
+
+pub fn stft(m: &mut Machine, extra_offset: i32) {
+    if let (Some(val), Some(offset)) = (m.pop(), m.pop()) {
+        m.frame_store(val, offset + extra_offset);
+    }
+}
+
+pub fn ldfi(m: &mut Machine, offset: i32) {
+    if let Some(x) = m.frame_load(offset) {
         m.push(x);
     }
 }
 
-pub fn store(m: &mut Machine, offset: i32) {
+pub fn stfi(m: &mut Machine, offset: i32) {
     if let Some(top) = m.pop() {
-        m.store(top, offset);
+        m.frame_store(top, offset);
+    }
+}
+
+pub fn ldgi(m: &mut Machine, addr: i32) {
+    if let Some(val) = m.global_load(addr) {
+        m.push(val);
+    }
+}
+
+pub fn stgi(m: &mut Machine, addr: i32) {
+    if let Some(val) = m.pop() {
+        m.global_store(addr, val);
+    }
+}
+
+
+pub fn ldgt(m: &mut Machine, extra_offset: i32) {
+    if let Some(addr) = m.pop() {
+        if let Some(val) = m.global_load(addr + extra_offset) {
+            m.push(val);
+        }
+    }
+}
+
+pub fn stgt(m: &mut Machine, extra_offset: i32) {
+    if let (Some(val), Some(addr)) = (m.pop(), m.pop()) {
+        m.global_store(addr + extra_offset, val );
     }
 }
 
@@ -87,7 +128,8 @@ pub fn exit(m: &mut Machine, code: i32) {
 }
 
 pub fn jal(m: &mut Machine, offset: i32) {
-    m.pushpc();
+    let pc = m.getpc();
+    m.push(pc);
     m.jump(offset);
 }
 
@@ -98,18 +140,6 @@ pub fn jump(m: &mut Machine, offset: i32) {
 pub fn ret(m: &mut Machine, _: i32) {
     if let Some(loc) = m.pop() {
         m.setpc(loc);
-    }
-}
-
-pub fn aload(m: &mut Machine, loc: i32) {
-    if let Some(x) = m.load_abs(loc) {
-        m.push(x);
-    }
-}
-
-pub fn astore(m: &mut Machine, loc: i32) {
-    if let Some(x) = m.pop() {
-        m.store_abs(loc, x);
     }
 }
 
@@ -140,15 +170,15 @@ macro_rules! binary_op_funcs {
 }
 
 binary_op_funcs! {
-        add ( + );
-        sub ( - );
-        mul ( * );
-        div ( / );
-        rem ( % );
-        and ( & );
-        or  ( | );
-        xor ( ^ );
-    }
+    add ( + );
+    sub ( - );
+    mul ( * );
+    div ( / );
+    rem ( % );
+    and ( & );
+    or  ( | );
+    xor ( ^ );
+}
 
 macro_rules! binary_op_imm_funcs {
     ( $($name:ident ($operator:tt));+; ) => {
@@ -241,7 +271,8 @@ register_ops!(
     addi subi muli divi remi andi ori xori
     sar shl shr
     beq bne blt bge
-    load store aload astore
+    ldgi stgi ldgt stgt
+    ldfi stfi ldft stft
     jump jal ret exit
     breakp print
 );

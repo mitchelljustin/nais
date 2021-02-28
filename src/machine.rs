@@ -4,16 +4,16 @@ use std::fmt::{Debug, Formatter, Write};
 use MachineError::*;
 use MachineStatus::*;
 
-use crate::constants::{BOUNDARY_ADDR, FP_ADDR, INIT_STACK, MAX_CYCLES, PC_ADDR, SEG_CODE_END, SEG_CODE_START, SEG_LEN, SEG_STACK_END, SEG_STACK_START, SP_ADDR};
+use crate::constants::{BOUNDARY_ADDR, FP_ADDR, INIT_STACK, MAX_CYCLES, PC_ADDR, SEG_CODE_END, SEG_CODE_START, SEG_LEN, SEG_STACK_END, SEG_STACK_START, SP_ADDR, SP_MINIMUM};
 use crate::isa::{Encoder, Inst};
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum MachineError {
-    EmptyStackPop,
+    IllegalStackPop,
     StackOverflow,
     CodeSegFault,
     InvalidInstruction,
-    CannotDecodeInstruction(i32),
+    CannotDecodeInst(i32),
     StackIndexOutOfBounds,
     StackSegFault,
     ProgramExit(i32),
@@ -82,7 +82,7 @@ impl Machine {
         self.mem_stack[PC_ADDR as usize] = loc;
     }
 
-    fn getpc(&mut self) -> i32 {
+    pub fn getpc(&mut self) -> i32 {
         self.mem_stack[PC_ADDR as usize]
     }
 
@@ -100,8 +100,8 @@ impl Machine {
 
     pub fn pop(&mut self) -> Option<i32> {
         let sp = self.getsp();
-        if sp <= 0 {
-            self.set_status(Error(EmptyStackPop));
+        if sp <= SP_MINIMUM {
+            self.set_status(Error(IllegalStackPop));
             return None;
         }
         let sp = sp - 1;
@@ -145,25 +145,20 @@ impl Machine {
     }
 
 
-    pub fn load(&mut self, offset: i32) -> Option<i32> {
+    pub fn frame_load(&mut self, offset: i32) -> Option<i32> {
         match self.stack_frame_ref(offset) {
             None => None,
             Some(r) => Some(*r)
         }
     }
 
-    pub fn store(&mut self, x: i32, offset: i32) {
+    pub fn frame_store(&mut self, val: i32, offset: i32) {
         match self.stack_frame_ref(offset) {
             None => {},
             Some(r) => {
-                *r = x;
+                *r = val;
             }
         };
-    }
-
-    pub fn pushpc(&mut self) {
-        let pc = self.getpc();
-        self.push(pc);
     }
 
     pub fn jump(&mut self, offset: i32) {
@@ -171,13 +166,13 @@ impl Machine {
         self.setpc(pc + offset);
     }
 
-    pub fn store_abs(&mut self, addr: i32, x: i32) {
+    pub fn global_store(&mut self, addr: i32, x: i32) {
         if let Some(r) = self.stack_ref(addr) {
             *r = x;
         }
     }
 
-    pub fn load_abs(&mut self, addr: i32) -> Option<i32> {
+    pub fn global_load(&mut self, addr: i32) -> Option<i32> {
         match self.stack_ref(addr) {
             None => None,
             Some(r) => Some(*r),
@@ -210,7 +205,7 @@ impl Machine {
             },
             Ok(inst) => inst
         };
-        // println!("{:<5} {}", self.ncycles, inst);
+        println!("{:<4} {}", self.ncycles, inst);
         (inst.op.f)(self, inst.arg);
         self.jump(1);
         self.ncycles += 1;
@@ -226,7 +221,7 @@ impl Machine {
         let inst_addr = (addr - SEG_CODE_START) as usize;
         let bin_inst = self.mem_code[inst_addr];
         match self.encoder.decode(bin_inst) {
-            None => Err(CannotDecodeInstruction(bin_inst)),
+            None => Err(CannotDecodeInst(bin_inst)),
             Some(inst) => Ok(Inst{
                 addr: Some(addr),
                 ..inst
