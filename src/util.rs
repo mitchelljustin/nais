@@ -4,3 +4,13 @@ pub fn parse_hex(s: &str) -> Option<i32> {
         Err(_) => None
     }
 }
+
+#[macro_export]
+macro_rules! unwrap_or_return {
+    ( $e:expr ) => {
+        match $e {
+            None => return None,
+            Some(x) => x,
+        }
+    };
+}

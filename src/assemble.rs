@@ -6,11 +6,12 @@ use crate::assemble::AssemblyError::MissingTarget;
 use crate::constants::SEG_CODE_START;
 use crate::isa::{Encoder, Inst, OP_INVALID};
 use crate::isa;
-use crate::machine::DebugInfo;
+use crate::machine::{CallFrame, DebugInfo};
+use crate::unwrap_or_return;
 
 macro_rules! parse_asm_line {
     ( $p:ident label $label:ident ) => {
-        $p.add_label(stringify!($label));
+        $p.add_subroutine(stringify!($label));
     };
     ( $p:ident inner $label:ident ) => {
         $p.add_inner_label(stringify!($label));
@@ -70,7 +71,7 @@ macro_rules! add_asm {
 macro_rules! program_from_asm {
     ( $( $mnem:ident $($label:ident)* $($a:literal)* );+; ) => {
        {
-           let mut p = Program::new();
+           let mut p = Assembler::new();
            p.init();
            add_asm! {
                [program: p]
@@ -86,20 +87,20 @@ macro_rules! program_from_asm {
 #[derive(Copy, Clone)]
 pub enum LabelType {
     Constant,
-    Global,
-    Code,
-    InnerCode,
-    Frame,
+    GlobalVar,
+    Subroutine,
+    InnerLabel,
+    FrameVar,
 }
 
 impl Display for LabelType {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             LabelType::Constant => "C",
-            LabelType::Global => "G",
-            LabelType::Code => "L",
-            LabelType::InnerCode => "I",
-            LabelType::Frame => "F",
+            LabelType::GlobalVar => "G",
+            LabelType::Subroutine => "S",
+            LabelType::InnerLabel => "I",
+            LabelType::FrameVar => "F",
         })
     }
 }
@@ -107,10 +108,12 @@ impl Display for LabelType {
 
 #[derive(Clone)]
 struct LabelEntry {
-    code_loc: i32,
+    name: String,
+    start_addr: i32,
+    frame_labels: HashMap<String, i32>,
     locals_size: i32,
     args_size: i32,
-    frame_labels: HashMap<String, i32>,
+    label_type: LabelType,
 }
 
 #[derive(Clone, Debug)]
@@ -130,31 +133,30 @@ impl Display for AssemblyError {
     }
 }
 
-#[derive(Clone)]
-pub struct Program {
+pub struct Assembler {
     instructions: Vec<Inst>,
-    scope_labels: HashMap<String, LabelEntry>,
+    label_entries: HashMap<String, LabelEntry>,
     global_vars: HashMap<String, i32>,
     constants: HashMap<String, i32>,
-    inst_scope: Vec<String>,
-    cur_scope_label: String,
+    frame_name_for_inst: Vec<String>,
+    cur_frame_name: String,
     reloc_tab: HashMap<usize, String>,
     resolved_labels: HashMap<String, (i32, LabelType)>,
     encoder: Encoder,
     errors: Vec<AssemblyError>,
 }
 
-impl Program {
-    pub fn new() -> Program {
-        Program {
+impl Assembler {
+    pub fn new() -> Assembler {
+        Assembler {
             instructions: Vec::new(),
-            scope_labels: HashMap::new(),
+            label_entries: HashMap::new(),
             global_vars: HashMap::new(),
             constants: HashMap::new(),
-            inst_scope: Vec::new(),
+            frame_name_for_inst: Vec::new(),
             reloc_tab: HashMap::new(),
             resolved_labels: HashMap::new(),
-            cur_scope_label: String::new(),
+            cur_frame_name: String::new(),
             encoder: Encoder::new(),
             errors: Vec::new(),
         }
@@ -164,7 +166,7 @@ impl Program {
         self.add_global_var("pc", 0);
         self.add_global_var("sp", 1);
         self.add_global_var("fp", 2);
-        self.add_label("_entry");
+        self.add_subroutine("_entry");
         for (callcode, name) in isa::ENV_CALLS.iter().enumerate() {
             self.add_constant(name, callcode as i32);
         }
@@ -191,7 +193,7 @@ impl Program {
             addr,
             ..inst
         });
-        self.inst_scope.push(self.cur_scope_label.clone());
+        self.frame_name_for_inst.push(self.cur_frame_name.clone());
     }
 
     pub fn add_placeholder_inst(&mut self, opname: &str, label: &str) {
@@ -199,27 +201,29 @@ impl Program {
         self.add_inst(opname, 0);
     }
 
-    pub fn add_label(&mut self, name: &str) {
-        self.add_label_entry(name);
-        self.cur_scope_label = String::from(name);
+    pub fn add_subroutine(&mut self, name: &str) {
+        self.add_label_entry(name, LabelType::Subroutine);
+        self.cur_frame_name = name.to_string();
     }
 
     pub fn add_inner_label(&mut self, name: &str) {
-        self.add_label_entry(&Program::make_inner_label(&self.cur_scope_label, name));
+        self.add_label_entry(name, LabelType::InnerLabel);
     }
 
-    fn add_label_entry(&mut self, name: &str) {
-        self.scope_labels.insert(String::from(name), LabelEntry {
-            code_loc: self.instructions.len() as i32,
+    fn add_label_entry(&mut self, name: &str, label_type: LabelType) {
+        self.label_entries.insert(name.to_string(), LabelEntry {
+            label_type,
+            name: name.to_string(),
+            start_addr: self.instructions.len() as i32,
             frame_labels: HashMap::new(),
             locals_size: 0,
             args_size: 0,
         });
     }
 
-    fn cur_label_entry(&mut self) -> &mut LabelEntry {
-        self.scope_labels
-            .get_mut(&self.cur_scope_label)
+    fn cur_frame(&mut self) -> &mut LabelEntry {
+        self.label_entries
+            .get_mut(&self.cur_frame_name)
             .expect("current label not found")
     }
 
@@ -231,14 +235,14 @@ impl Program {
     }
 
     pub fn add_local_var(&mut self, name: &str, sz: i32) {
-        let label_entry = self.cur_label_entry();
-        label_entry.frame_labels.insert(
+        let frame = self.cur_frame();
+        frame.frame_labels.insert(
             String::from(name),
-            label_entry.locals_size,
+            frame.locals_size,
         );
-        label_entry.locals_size += sz;
+        frame.locals_size += sz;
         if sz > 1 {
-            label_entry.frame_labels.insert(
+            frame.frame_labels.insert(
                 format!("{}_len", name),
                 sz,
             );
@@ -246,7 +250,7 @@ impl Program {
     }
 
     pub fn add_arg_var(&mut self, name: &str, sz: i32) {
-        let label_entry = self.cur_label_entry();
+        let label_entry = self.cur_frame();
         label_entry.frame_labels.insert(
             String::from(name),
             -label_entry.args_size - 3, // [..args retaddr savedfp || locals ]
@@ -262,14 +266,14 @@ impl Program {
         self.add_placeholder_inst("loadi", "fp");
         self.add_placeholder_inst("loadi", "sp");
         self.add_placeholder_inst("storei", "fp");
-        let extend_sz = self.cur_label_entry().locals_size;
+        let extend_sz = self.cur_frame().locals_size;
         if extend_sz > 0 {
             self.add_inst("extend", extend_sz);
         }
     }
 
     pub fn end_frame(&mut self) {
-        let drop_sz = self.cur_label_entry().locals_size;
+        let drop_sz = self.cur_frame().locals_size;
         if drop_sz > 0 {
             self.add_inst("drop", drop_sz);
         }
@@ -285,32 +289,32 @@ impl Program {
             return Some((value, LabelType::Constant));
         }
         // Code label
-        if let Some(label_entry) = self.scope_labels.get(target) {
-            let value = Program::calc_inst_offset(
-                label_entry.code_loc,
+        if let Some(label_entry) = self.label_entries.get(target) {
+            let value = Assembler::calc_inst_offset(
+                label_entry.start_addr,
                 inst_loc,
             );
-            return Some((value, LabelType::Code));
+            return Some((value, LabelType::Subroutine));
         }
         // Global variable
         if let Some(&value) = self.global_vars.get(target) {
-            return Some((value, LabelType::Global));
+            return Some((value, LabelType::GlobalVar));
         }
         // Local scope
-        let scope_label = &self.inst_scope[inst_loc];
-        let scope_entry = self.scope_labels.get(scope_label).unwrap();
-        let inner_label_name = Program::make_inner_label(scope_label, target);
+        let scope_label = &self.frame_name_for_inst[inst_loc];
+        let scope_entry = self.label_entries.get(scope_label).unwrap();
+        let inner_label_name = Assembler::make_inner_label(scope_label, target);
         // Local code (inner label)
-        if let Some(label_entry) = self.scope_labels.get(&inner_label_name) {
-            let value = Program::calc_inst_offset(
-                label_entry.code_loc,
+        if let Some(label_entry) = self.label_entries.get(&inner_label_name) {
+            let value = Assembler::calc_inst_offset(
+                label_entry.start_addr,
                 inst_loc,
             );
-            return Some((value, LabelType::InnerCode));
+            return Some((value, LabelType::InnerLabel));
         }
         // Local frame var
         if let Some(&value) = scope_entry.frame_labels.get(target) {
-            return Some((value, LabelType::Frame));
+            return Some((value, LabelType::FrameVar));
         }
         None
     }
@@ -319,7 +323,7 @@ impl Program {
         let mut unrelocated = Vec::<(usize, String)>::new();
         let mut arg_updates = Vec::<(usize, i32)>::new();
         for (inst_loc, target) in self.reloc_tab.iter() {
-            match (&self).resolve_label(target, *inst_loc) {
+            match self.resolve_label(target, *inst_loc) {
                 Some((value, label_type)) => {
                     self.resolved_labels.insert(target.clone(), (value, label_type));
                     arg_updates.push((*inst_loc, value));
@@ -365,7 +369,7 @@ impl Program {
     }
 }
 
-impl Display for Program {
+impl Display for Assembler {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.write_str(&self.instructions
             .iter()
@@ -376,8 +380,8 @@ impl Display for Program {
     }
 }
 
-impl DebugInfo for Program {
-    fn label_for_inst(&self, addr: i32) -> Option<(String, String)> {
+impl DebugInfo for Assembler {
+    fn resolved_label_for_inst(&self, addr: i32) -> Option<(String, String)> {
         let loc = (addr - SEG_CODE_START) as usize;
         let label = match self.reloc_tab.get(&loc) {
             None => return None,
@@ -390,9 +394,26 @@ impl DebugInfo for Program {
         Some((label, label_type.to_string()))
     }
 
-    fn scope_for_inst(&self, addr: i32) -> Option<String> {
+    fn call_frame_for_inst(&self, addr: i32) -> Option<CallFrame> {
         let loc = (addr - SEG_CODE_START) as usize;
-        self.inst_scope.get(loc).map(|s| s.clone())
+        let name = unwrap_or_return!(self.frame_name_for_inst.get(loc));
+        let LabelEntry {
+            name,
+            start_addr,
+            frame_labels,
+            ..
+        } = unwrap_or_return!(self.label_entries.get(name).cloned());
+        let (locals, args) = frame_labels.into_iter().partition(
+            |&(_, offset)| offset >= 0
+        );
+        Some(
+            CallFrame {
+                name,
+                start_addr,
+                locals,
+                args,
+            }
+        )
     }
 
     fn value_for_label(&self, name: &str) -> Option<(i32, String)> {

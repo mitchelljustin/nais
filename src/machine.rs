@@ -1,4 +1,5 @@
 use std::{cmp, fmt, io};
+use std::collections::HashMap;
 use std::fmt::{Debug, Formatter, Write as FmtWrite};
 use std::io::Write;
 use std::ops::Range;
@@ -10,9 +11,16 @@ use crate::constants::{BOUNDARY_ADDR, FP_ADDR, INIT_STACK, MAX_CYCLES, PC_ADDR, 
 use crate::isa::{Encoder, Inst};
 use crate::util;
 
+pub struct CallFrame {
+    pub name: String,
+    pub start_addr: i32,
+    pub args: HashMap<String, i32>,
+    pub locals: HashMap<String, i32>,
+}
+
 pub trait DebugInfo {
-    fn label_for_inst(&self, addr: i32) -> Option<(String, String)>;
-    fn scope_for_inst(&self, addr: i32) -> Option<String>;
+    fn resolved_label_for_inst(&self, addr: i32) -> Option<(String, String)>;
+    fn call_frame_for_inst(&self, addr: i32) -> Option<CallFrame>;
     fn value_for_label(&self, name: &str) -> Option<(i32, String)>;
 }
 
@@ -200,6 +208,10 @@ impl<'a> Machine<'a> {
         println!("\nBREAKPOINT");
         self.jump(1);
         println!("{}", self.code_dump_around_pc(-4..5));
+        self.run_debugger();
+    }
+
+    fn run_debugger(&mut self) {
         let mut next_counter = 0;
         loop {
             print!("debug% ");
@@ -221,7 +233,9 @@ impl<'a> Machine<'a> {
             };
             let command = parts[0];
             match command {
-                "c" | "continue" => return,
+                "c" | "continue" => {
+                    return;
+                },
                 "n" | "next" => {
                     let pc = self.getpc();
                     self.cycle();
@@ -290,18 +304,18 @@ impl<'a> Machine<'a> {
 
     pub fn code_dump(&self, highlight: i32, range: Range<i32>) -> String {
         let mut out = String::new();
-        let mut cur_scope = match self.scope_for_inst(range.start){
-            None => "".to_string(),
-            Some(lab) => {
-                writeln!(out, ".. {}()", lab).unwrap();
-                lab
+        let mut cur_frame = match self.call_frame_for_inst(range.start) {
+            None => None,
+            Some(frame) => {
+                writeln!(out, ".. {}:", frame.name).unwrap();
+                Some(frame)
             }
         };
         for addr in range {
-            if let Some(scope) = self.scope_for_inst(addr) {
-                if scope != cur_scope {
-                    cur_scope = scope;
-                    writeln!(out, "{}()", cur_scope).unwrap();
+            if let Some(frame) = self.call_frame_for_inst(addr) {
+                if frame.name != cur_frame.as_ref().unwrap().name {
+                    writeln!(out, "{}:", frame.name).unwrap();
+                    cur_frame = Some(frame);
                 }
             }
             out.write_str("    ").unwrap();
@@ -312,8 +326,10 @@ impl<'a> Machine<'a> {
                     continue;
                 }
             };
-            if let Some((lab, lab_type)) = self.label_for_inst(addr) {
+            if let Some((lab, lab_type)) = self.resolved_label_for_inst(addr) {
                 write!(out, " {:8} ({})", lab, lab_type).unwrap();
+            } else {
+                out.write_str(&" ".repeat(13)).unwrap();
             }
             if addr == highlight {
                 out.write_str(" <========").unwrap()
@@ -389,18 +405,18 @@ impl<'a> Machine<'a> {
     }
 }
 
-impl DebugInfo for Machine<'_>  {
-    fn label_for_inst(&self, addr: i32) -> Option<(String, String)> {
+impl DebugInfo for Machine<'_> {
+    fn resolved_label_for_inst(&self, addr: i32) -> Option<(String, String)> {
         match self.debug_info {
             None => None,
-            Some(info) => info.label_for_inst(addr)
+            Some(info) => info.resolved_label_for_inst(addr)
         }
     }
 
-    fn scope_for_inst(&self, addr: i32) -> Option<String> {
+    fn call_frame_for_inst(&self, addr: i32) -> Option<CallFrame> {
         match self.debug_info {
             None => None,
-            Some(info) => info.scope_for_inst(addr)
+            Some(info) => info.call_frame_for_inst(addr)
         }
     }
 

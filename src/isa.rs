@@ -130,7 +130,7 @@ pub fn extend(m: &mut Machine, amt: i32) {
     m.extend(amt);
 }
 
-pub fn invalid(m: &mut Machine, _: i32) {
+pub fn invald(m: &mut Machine, _: i32) {
     m.set_status(MachineStatus::Error(MachineError::InvalidInstruction));
 }
 
@@ -250,7 +250,7 @@ macro_rules! register_ops {
 }
 
 register_ops!(
-    invalid
+    invald
     push extend drop
     add sub mul div rem and or xor
     addi subi muli divi remi andi ori xori

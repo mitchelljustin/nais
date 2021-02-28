@@ -1,8 +1,10 @@
 #![allow(overflowing_literals)]
 
-use machine::*;
-use crate::assemble::Program;
+use std::env;
 
+use machine::*;
+
+use crate::assemble::Assembler;
 
 #[macro_use]
 mod assemble;
@@ -11,7 +13,7 @@ mod isa;
 mod constants;
 mod util;
 
-fn array_on_stack() -> Program {
+fn array_on_stack() -> Assembler {
     program_from_asm! {
         local index;
         array state 10;
@@ -69,6 +71,7 @@ fn array_on_stack() -> Program {
         label mangle;
         arg x;
             start_frame;
+            ebreak;
 
             loadf x;
             addi 78;
@@ -109,8 +112,44 @@ fn array_on_stack() -> Program {
     }
 }
 
+fn test_debugger() -> Assembler {
+    program_from_asm! {
+        start_frame;
+
+        push 0;
+        jal nolocals;
+        drop 1;
+
+        end_frame;
+        push 0;
+        ecall exit;
+
+    label nolocals;
+        arg x;
+
+        start_frame;
+
+        loadf x;
+        addi 1;
+        storef x;
+
+        end_frame;
+        ret;
+    }
+}
+
+fn program_with_name(name: &str) -> Assembler {
+    match name {
+        "deb" => test_debugger(),
+        "array" => array_on_stack(),
+        _ => array_on_stack(),
+    }
+}
+
 fn main() {
-    let mut program = array_on_stack();
+    let args: Vec<String> = env::args().collect();
+    let which = args.get(1).cloned().unwrap_or("".to_string());
+    let mut program = program_with_name(&which);
     let binary = {
         match program.assemble() {
             Err(errors) => {
