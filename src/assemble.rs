@@ -89,17 +89,17 @@ pub enum LabelType {
     Global,
     Code,
     InnerCode,
-    Local,
+    Frame,
 }
 
 impl Display for LabelType {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            LabelType::Constant => "constant",
-            LabelType::Global => "",
-            LabelType::Code => "label",
-            LabelType::InnerCode => "inner",
-            LabelType::Local => "local",
+            LabelType::Constant => "C",
+            LabelType::Global => "G",
+            LabelType::Code => "L",
+            LabelType::InnerCode => "I",
+            LabelType::Frame => "F",
         })
     }
 }
@@ -212,7 +212,7 @@ impl Program {
         self.scope_labels.insert(String::from(name), LabelEntry {
             code_loc: self.instructions.len() as i32,
             frame_labels: HashMap::new(),
-            locals_size: 1,
+            locals_size: 0,
             args_size: 0,
         });
     }
@@ -310,7 +310,7 @@ impl Program {
         }
         // Local frame var
         if let Some(&value) = scope_entry.frame_labels.get(target) {
-            return Some((value, LabelType::Local));
+            return Some((value, LabelType::Frame));
         }
         None
     }
@@ -388,6 +388,11 @@ impl DebugInfo for Program {
             Some((_, t)) => *t
         };
         Some((label, label_type.to_string()))
+    }
+
+    fn scope_for_inst(&self, addr: i32) -> Option<String> {
+        let loc = (addr - SEG_CODE_START) as usize;
+        self.inst_scope.get(loc).map(|s| s.clone())
     }
 
     fn value_for_label(&self, name: &str) -> Option<(i32, String)> {

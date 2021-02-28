@@ -70,8 +70,6 @@ fn array_on_stack() -> Program {
         arg x;
             start_frame;
 
-            ebreak;
-
             loadf x;
             addi 78;
             storef x;

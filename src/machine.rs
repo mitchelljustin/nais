@@ -10,9 +10,9 @@ use crate::constants::{BOUNDARY_ADDR, FP_ADDR, INIT_STACK, MAX_CYCLES, PC_ADDR, 
 use crate::isa::{Encoder, Inst};
 use crate::util;
 
-
 pub trait DebugInfo {
     fn label_for_inst(&self, addr: i32) -> Option<(String, String)>;
+    fn scope_for_inst(&self, addr: i32) -> Option<String>;
     fn value_for_label(&self, name: &str) -> Option<(i32, String)>;
 }
 
@@ -290,22 +290,35 @@ impl<'a> Machine<'a> {
 
     pub fn code_dump(&self, highlight: i32, range: Range<i32>) -> String {
         let mut out = String::new();
+        let mut cur_scope = match self.scope_for_inst(range.start){
+            None => "".to_string(),
+            Some(lab) => {
+                writeln!(out, ".. {}()", lab).unwrap();
+                lab
+            }
+        };
         for addr in range {
-            let hl = if addr == highlight { "<========" } else { "" };
-            let label = match self.debug_info {
-                None => "".to_string(),
-                Some(info) =>
-                    match info.label_for_inst(addr) {
-                        Some((l, t)) => format!(" {:10} {}", l, t),
-                        None => "".to_string()
-                    }
-            };
+            if let Some(scope) = self.scope_for_inst(addr) {
+                if scope != cur_scope {
+                    cur_scope = scope;
+                    writeln!(out, "{}()", cur_scope).unwrap();
+                }
+            }
+            out.write_str("    ").unwrap();
             match self.inst_at_addr(addr) {
-                Ok(inst) =>
-                    writeln!(out, "{:<26}{}{}", inst.to_string(), label, hl).unwrap(),
-                Err(err) =>
-                    writeln!(out, "ERR FETCHING INST {:?}", err).unwrap()
+                Ok(inst) => { out.write_str(&inst.to_string()).unwrap(); }
+                Err(err) => {
+                    writeln!(out, "ERR FETCHING INST {:?}", err).unwrap();
+                    continue;
+                }
             };
+            if let Some((lab, lab_type)) = self.label_for_inst(addr) {
+                write!(out, " {:8} ({})", lab, lab_type).unwrap();
+            }
+            if addr == highlight {
+                out.write_str(" <========").unwrap()
+            }
+            out.write_str("\n").unwrap();
         }
         out
     }
@@ -372,6 +385,29 @@ impl<'a> Machine<'a> {
                 addr: Some(addr),
                 ..inst
             })
+        }
+    }
+}
+
+impl DebugInfo for Machine<'_>  {
+    fn label_for_inst(&self, addr: i32) -> Option<(String, String)> {
+        match self.debug_info {
+            None => None,
+            Some(info) => info.label_for_inst(addr)
+        }
+    }
+
+    fn scope_for_inst(&self, addr: i32) -> Option<String> {
+        match self.debug_info {
+            None => None,
+            Some(info) => info.scope_for_inst(addr)
+        }
+    }
+
+    fn value_for_label(&self, name: &str) -> Option<(i32, String)> {
+        match self.debug_info {
+            None => None,
+            Some(info) => info.value_for_label(name)
         }
     }
 }
