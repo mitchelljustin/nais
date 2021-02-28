@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter, Result};
-use std::io;
-use std::io::Write;
 
 use crate::machine::{MachineError, MachineStatus};
 use crate::machine::MachineStatus::Stopped;
@@ -28,8 +26,8 @@ impl Display for Inst {
             Some(addr) => format!("{:x}", addr)
         };
         let arg_trunc = self.arg & 0xffffff;
-        write!(f, "{} <{:02x}> {:6} {:6x} [{:4}]",
-               addr, self.opcode, self.op.name, arg_trunc, self.arg)
+        write!(f, "{} {:6} {:6x} [{:4}]",
+               addr, self.op.name, arg_trunc, self.arg)
     }
 }
 
@@ -108,69 +106,8 @@ pub fn ecall(m: &mut Machine, callcode: i32) {
     }
 }
 
-fn parse_hex(s: &str) -> Option<i32> {
-    match i32::from_str_radix(s, 16) {
-        Ok(val) => Some(val),
-        Err(_) => None
-    }
-}
-
 pub fn ebreak(m: &mut Machine, _: i32) {
-    println!("\n<<BREAKPOINT>>");
-    m.jump(1);
-    println!("{}", m.code_dump(-5..5));
-    let mut code_start = 0;
-    loop {
-        print!("debug% ");
-        io::stdout().flush().unwrap();
-        let mut line = String::new();
-        if let Err(_) = io::stdin().read_line(&mut line) {
-            return;
-        }
-        let line = line.trim();
-        let parts = line.split(" ").collect::<Vec<_>>();
-        let int_args = parts[1..]
-            .iter()
-            .filter_map(|s| parse_hex(s))
-            .collect::<Vec<_>>();
-        let command = parts[0];
-        match command {
-            "c" | "continue" => return,
-            "n" | "next" => {
-                m.cycle();
-                code_start += 1;
-                println!("{}", m.code_dump((-2 - code_start)..2));
-            }
-            "pc" | "code" => {
-                println!("{}", m.code_dump(-20..20));
-            }
-            "ps" | "stack" => {
-                println!("{}", m.stack_dump());
-            }
-            "s" | "store" => {
-                if let [addr, val] = int_args.as_slice() {
-                    m.store(*addr, *val);
-                } else {
-                    println!("format: s|store [addr] [val]");
-                }
-            }
-            "l" | "load" => {
-                if let [addr] = int_args.as_slice() {
-                    if let Some(dump) = m.stack_addr_dump(*addr) {
-                        println!("{}", dump);
-                    } else {
-                        println!("Invalid address")
-                    }
-                } else {
-                    println!("format: l|load [addr]");
-                }
-            }
-            "" => continue,
-            _ => {
-                println!("?");
-            }
-        }
-    }
+    m.breakpoint();
 }
 
 pub fn jal(m: &mut Machine, offset: i32) {
@@ -184,8 +121,8 @@ pub fn jump(m: &mut Machine, offset: i32) {
 }
 
 pub fn ret(m: &mut Machine, _: i32) {
-    if let Some(loc) = m.pop() {
-        m.setpc(loc);
+    if let Some(addr) = m.pop() {
+        m.setpc(addr);
     }
 }
 

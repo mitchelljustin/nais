@@ -6,6 +6,7 @@ use crate::assemble::AssemblyError::MissingTarget;
 use crate::constants::SEG_CODE_START;
 use crate::isa::{Encoder, Inst, OP_INVALID};
 use crate::isa;
+use crate::machine::DebugInfo;
 
 macro_rules! parse_asm_line {
     ( $p:ident label $label:ident ) => {
@@ -82,26 +83,34 @@ macro_rules! program_from_asm {
     };
 }
 
+#[derive(Copy, Clone)]
+pub enum LabelType {
+    Constant,
+    Global,
+    Code,
+    InnerCode,
+    Local,
+}
+
+impl Display for LabelType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            LabelType::Constant => "constant",
+            LabelType::Global => "",
+            LabelType::Code => "label",
+            LabelType::InnerCode => "inner",
+            LabelType::Local => "local",
+        })
+    }
+}
+
+
 #[derive(Clone)]
 struct LabelEntry {
     code_loc: i32,
     locals_size: i32,
     args_size: i32,
     frame_labels: HashMap<String, i32>,
-}
-
-
-#[derive(Clone)]
-pub struct Program {
-    instructions: Vec<Inst>,
-    scope_labels: HashMap<String, LabelEntry>,
-    global_vars: HashMap<String, i32>,
-    constants: HashMap<String, i32>,
-    inst_scope: Vec<String>,
-    cur_scope_label: String,
-    reloc_tab: Vec<(usize, String)>,
-    encoder: Encoder,
-    errors: Vec<AssemblyError>,
 }
 
 #[derive(Clone, Debug)]
@@ -115,10 +124,24 @@ impl Display for AssemblyError {
         match self {
             MissingTarget(inst, target) => {
                 write!(f, "MissingTarget({} \"{}\")", inst, target)
-            },
+            }
             other => write!(f, "{:?}", other)
         }
     }
+}
+
+#[derive(Clone)]
+pub struct Program {
+    instructions: Vec<Inst>,
+    scope_labels: HashMap<String, LabelEntry>,
+    global_vars: HashMap<String, i32>,
+    constants: HashMap<String, i32>,
+    inst_scope: Vec<String>,
+    cur_scope_label: String,
+    reloc_tab: HashMap<usize, String>,
+    resolved_labels: HashMap<String, (i32, LabelType)>,
+    encoder: Encoder,
+    errors: Vec<AssemblyError>,
 }
 
 impl Program {
@@ -129,7 +152,8 @@ impl Program {
             global_vars: HashMap::new(),
             constants: HashMap::new(),
             inst_scope: Vec::new(),
-            reloc_tab: Vec::new(),
+            reloc_tab: HashMap::new(),
+            resolved_labels: HashMap::new(),
             cur_scope_label: String::new(),
             encoder: Encoder::new(),
             errors: Vec::new(),
@@ -153,7 +177,7 @@ impl Program {
             None => {
                 self.errors.push(AssemblyError::NoSuchOp(
                     loc, String::from(opname)));
-                self.instructions.push(Inst{
+                self.instructions.push(Inst {
                     opcode: 0x00,
                     op: OP_INVALID,
                     arg,
@@ -171,7 +195,7 @@ impl Program {
     }
 
     pub fn add_placeholder_inst(&mut self, opname: &str, label: &str) {
-        self.reloc_tab.push((self.instructions.len(), String::from(label)));
+        self.reloc_tab.insert(self.instructions.len(), String::from(label));
         self.add_inst(opname, 0);
     }
 
@@ -188,7 +212,7 @@ impl Program {
         self.scope_labels.insert(String::from(name), LabelEntry {
             code_loc: self.instructions.len() as i32,
             frame_labels: HashMap::new(),
-            locals_size: 0,
+            locals_size: 1,
             args_size: 0,
         });
     }
@@ -216,7 +240,7 @@ impl Program {
         if sz > 1 {
             label_entry.frame_labels.insert(
                 format!("{}_len", name),
-                sz
+                sz,
             );
         }
     }
@@ -252,62 +276,75 @@ impl Program {
         self.add_placeholder_inst("storei", "fp");
     }
 
-    pub fn relocate(&mut self) {
-        let mut unrelocated = Vec::<(usize, String)>::new();
-        for (inst_loc, target) in self.reloc_tab.iter() {
-            let inst = &mut self.instructions[*inst_loc];
-
-            // Constant
-            if let Some(&value) = self.constants.get(target) {
-                inst.arg = value;
-                continue;
-            }
-            // Code label
-            if let Some(label_entry) = self.scope_labels.get(target) {
-                let value = Program::calc_pc_offset(
-                    label_entry.code_loc,
-                    *inst_loc,
-                );
-                inst.arg = value;
-                continue;
-            }
-            // Global variable
-            if let Some(&global_loc) = self.global_vars.get(target) {
-                inst.arg = global_loc;
-                continue;
-            }
-            // Local scope
-            let scope_label = &self.inst_scope[*inst_loc];
-            let scope_entry = self.scope_labels.get(scope_label).unwrap();
-            let inner_label_name = Program::make_inner_label(scope_label, target);
-            // Local code (inner label)
-            if let Some(label_entry) = self.scope_labels.get(&inner_label_name) {
-                let value = Program::calc_pc_offset(
-                    label_entry.code_loc,
-                    *inst_loc,
-                );
-                inst.arg = value;
-                continue;
-            }
-            // Local frame var
-            if let Some(&frame_offset) = scope_entry.frame_labels.get(target) {
-                inst.arg = frame_offset;
-                continue;
-            }
-            unrelocated.push((*inst_loc, target.clone()));
+    fn resolve_label(&self, target: &str, inst_loc: usize) -> Option<(i32, LabelType)> {
+        if let Some(&entry) = self.resolved_labels.get(target) {
+            return Some(entry);
         }
-        self.reloc_tab = unrelocated;
+        // Constant
+        if let Some(&value) = self.constants.get(target) {
+            return Some((value, LabelType::Constant));
+        }
+        // Code label
+        if let Some(label_entry) = self.scope_labels.get(target) {
+            let value = Program::calc_inst_offset(
+                label_entry.code_loc,
+                inst_loc,
+            );
+            return Some((value, LabelType::Code));
+        }
+        // Global variable
+        if let Some(&value) = self.global_vars.get(target) {
+            return Some((value, LabelType::Global));
+        }
+        // Local scope
+        let scope_label = &self.inst_scope[inst_loc];
+        let scope_entry = self.scope_labels.get(scope_label).unwrap();
+        let inner_label_name = Program::make_inner_label(scope_label, target);
+        // Local code (inner label)
+        if let Some(label_entry) = self.scope_labels.get(&inner_label_name) {
+            let value = Program::calc_inst_offset(
+                label_entry.code_loc,
+                inst_loc,
+            );
+            return Some((value, LabelType::InnerCode));
+        }
+        // Local frame var
+        if let Some(&value) = scope_entry.frame_labels.get(target) {
+            return Some((value, LabelType::Local));
+        }
+        None
+    }
+
+    pub fn relocate(&mut self) -> Vec<(usize, String)> {
+        let mut unrelocated = Vec::<(usize, String)>::new();
+        let mut arg_updates = Vec::<(usize, i32)>::new();
+        for (inst_loc, target) in self.reloc_tab.iter() {
+            match (&self).resolve_label(target, *inst_loc) {
+                Some((value, label_type)) => {
+                    self.resolved_labels.insert(target.clone(), (value, label_type));
+                    arg_updates.push((*inst_loc, value));
+                }
+                None => {
+                    unrelocated.push((*inst_loc, target.clone()));
+                }
+            }
+        }
+        for (loc, arg) in arg_updates.into_iter() {
+            self.instructions[loc].arg = arg;
+        }
+        unrelocated
     }
 
     pub fn assemble(&mut self) -> Result<Vec<i32>, Vec<AssemblyError>> {
-        self.relocate();
         let mut errors: Vec<AssemblyError> = self.errors
             .drain(..)
             .collect();
+
+        let unrelocated = self.relocate();
         errors.extend(
-            self.reloc_tab.iter()
+            unrelocated.into_iter()
                 .map(|(loc, target)|
-                    MissingTarget(self.instructions[*loc], target.clone()))
+                    MissingTarget(self.instructions[loc], target.clone()))
         );
         if !errors.is_empty() {
             return Err(errors);
@@ -319,7 +356,7 @@ impl Program {
         )
     }
 
-    fn calc_pc_offset(target_loc: i32, inst_loc: usize) -> i32 {
+    fn calc_inst_offset(target_loc: i32, inst_loc: usize) -> i32 {
         target_loc - (inst_loc as i32) - 1
     }
 
@@ -336,5 +373,25 @@ impl Display for Program {
             .collect::<Vec<String>>()
             .join("\n")
         )
+    }
+}
+
+impl DebugInfo for Program {
+    fn label_for_inst(&self, addr: i32) -> Option<(String, String)> {
+        let loc = (addr - SEG_CODE_START) as usize;
+        let label = match self.reloc_tab.get(&loc) {
+            None => return None,
+            Some(l) => l.clone()
+        };
+        let label_type = match self.resolved_labels.get(&label) {
+            None => return None,
+            Some((_, t)) => *t
+        };
+        Some((label, label_type.to_string()))
+    }
+
+    fn value_for_label(&self, name: &str) -> Option<(i32, String)> {
+        self.resolved_labels.get(name)
+            .map(|&(val, t)| (val, t.to_string()))
     }
 }

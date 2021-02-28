@@ -9,14 +9,13 @@ mod assemble;
 mod machine;
 mod isa;
 mod constants;
+mod util;
 
 fn array_on_stack() -> Program {
     program_from_asm! {
         local index;
         array state 10;
             start_frame;
-            ebreak;
-            jump _exit;
 
             push state_len;
             loadi fp;
@@ -31,8 +30,6 @@ fn array_on_stack() -> Program {
             drop 2;
 
             end_frame;
-
-        inner _exit;
             push 0;
             ecall exit;
 
@@ -72,6 +69,8 @@ fn array_on_stack() -> Program {
         label mangle;
         arg x;
             start_frame;
+
+            ebreak;
 
             loadf x;
             addi 78;
@@ -113,8 +112,8 @@ fn array_on_stack() -> Program {
 }
 
 fn main() {
+    let mut program = array_on_stack();
     let binary = {
-        let mut program = array_on_stack();
         match program.assemble() {
             Err(errors) => {
                 panic!("assembly errors: \n{}\n", errors
@@ -123,18 +122,13 @@ fn main() {
                     .collect::<Vec<String>>()
                     .join("\n"));
             }
-            Ok(bin) => {
-                println!("Program:\n{}", program);
-                bin
-            }
+            Ok(bin) => bin
         }
     };
     let mut machine = Machine::new();
+    machine.attach_debug_info(&program);
     machine.verbose = false;
     machine.max_cycles = 1_000_000_000;
     machine.copy_code(&binary);
     machine.run();
-    println!();
-    println!("Result: {:?}", machine);
-    println!("{}", machine.stack_dump());
 }
