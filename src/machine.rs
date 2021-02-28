@@ -17,6 +17,7 @@ pub enum MachineError {
     StackIndexOutOfBounds,
     StackSegFault,
     ProgramExit(i32),
+    NoSuchEnvCall(i32),
     MaxCyclesReached,
 }
 
@@ -98,10 +99,6 @@ impl Machine {
         self.mem_stack[SP_ADDR as usize] = sp;
     }
 
-    fn getfp(&self) -> i32 {
-        return self.mem_stack[FP_ADDR as usize];
-    }
-
     pub fn pop(&mut self) -> Option<i32> {
         let sp = self.getsp();
         if sp <= SP_MINIMUM {
@@ -131,11 +128,6 @@ impl Machine {
         self.mem_stack[SP_ADDR as usize] -= amt;
     }
 
-    fn stack_frame_ref(&mut self, offset: i32) -> Option<&mut i32> {
-        let fp = self.getfp();
-        self.stack_ref(fp + offset)
-    }
-
     fn stack_ref(&mut self, addr: i32) -> Option<&mut i32> {
         if addr < SEG_STACK_START || addr >= SEG_STACK_END {
             self.set_status(Error(StackSegFault));
@@ -146,23 +138,6 @@ impl Machine {
             return None;
         }
         Some(&mut self.mem_stack[addr as usize])
-    }
-
-
-    pub fn frame_load(&mut self, offset: i32) -> Option<i32> {
-        match self.stack_frame_ref(offset) {
-            None => None,
-            Some(r) => Some(*r)
-        }
-    }
-
-    pub fn frame_store(&mut self, val: i32, offset: i32) {
-        match self.stack_frame_ref(offset) {
-            None => {}
-            Some(r) => {
-                *r = val;
-            }
-        };
     }
 
     pub fn jump(&mut self, offset: i32) {

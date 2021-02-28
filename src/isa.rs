@@ -55,46 +55,20 @@ pub fn swap(m: &mut Machine, _: i32) {
     }
 }
 
-pub fn ldft(m: &mut Machine, extra_offset: i32) {
-    if let Some(offset) = m.pop() {
-        if let Some(val) = m.frame_load(offset + extra_offset) {
-            m.push(val);
-        }
-    }
-}
-
-pub fn stft(m: &mut Machine, extra_offset: i32) {
-    if let (Some(val), Some(offset)) = (m.pop(), m.pop()) {
-        m.frame_store(val, offset + extra_offset);
-    }
-}
-
-pub fn ldfi(m: &mut Machine, offset: i32) {
-    if let Some(x) = m.frame_load(offset) {
-        m.push(x);
-    }
-}
-
-pub fn stfi(m: &mut Machine, offset: i32) {
-    if let Some(top) = m.pop() {
-        m.frame_store(top, offset);
-    }
-}
-
-pub fn ldgi(m: &mut Machine, addr: i32) {
+pub fn loadi(m: &mut Machine, addr: i32) {
     if let Some(val) = m.global_load(addr) {
         m.push(val);
     }
 }
 
-pub fn stgi(m: &mut Machine, addr: i32) {
+pub fn storei(m: &mut Machine, addr: i32) {
     if let Some(val) = m.pop() {
         m.global_store(addr, val);
     }
 }
 
 
-pub fn ldgt(m: &mut Machine, extra_offset: i32) {
+pub fn loadr(m: &mut Machine, extra_offset: i32) {
     if let Some(addr) = m.pop() {
         if let Some(val) = m.global_load(addr + extra_offset) {
             m.push(val);
@@ -102,8 +76,8 @@ pub fn ldgt(m: &mut Machine, extra_offset: i32) {
     }
 }
 
-pub fn stgt(m: &mut Machine, extra_offset: i32) {
-    if let (Some(val), Some(addr)) = (m.pop(), m.pop()) {
+pub fn storer(m: &mut Machine, extra_offset: i32) {
+    if let (Some(addr), Some(val)) = (m.pop(), m.pop()) {
         m.global_store(addr + extra_offset, val );
     }
 }
@@ -118,11 +92,28 @@ pub fn print(m: &mut Machine, _: i32) {
     }
 }
 
-pub fn exit(m: &mut Machine, code: i32) {
-    if code == 0 {
-        m.set_status(Stopped);
-    } else {
-        m.set_status(MachineStatus::Error(MachineError::ProgramExit(code)));
+pub const ENV_CALLS: &[&str] = &[
+    "exit",
+];
+
+pub fn ecall(m: &mut Machine, callcode: i32) {
+    if callcode < 0 || callcode >= ENV_CALLS.len() as i32 {
+        m.set_status(MachineStatus::Error(MachineError::NoSuchEnvCall(callcode)));
+        return;
+    }
+    let call_name = ENV_CALLS[callcode as usize];
+
+    match call_name {
+        "exit" => {
+            if let Some(status) = m.pop() {
+                if status == 0 {
+                    m.set_status(Stopped);
+                } else {
+                    m.set_status(MachineStatus::Error(MachineError::ProgramExit(status)));
+                }
+            }
+        },
+        _ => {}
     }
 }
 
@@ -270,9 +261,9 @@ register_ops!(
     addi subi muli divi remi andi ori xori
     sar shl shr
     beq bne blt bge
-    ldgi stgi ldgt stgt
-    ldfi stfi ldft stft
-    jump jal ret exit
+    loadi storei loadr storer
+    jump jal ret
+    ecall
     breakp print
 );
 

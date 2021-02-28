@@ -6,6 +6,7 @@ use crate::assemble::AssemblyError::MissingTarget;
 use crate::constants::SEG_CODE_START;
 use crate::isa::{Encoder, Inst, OP_INVALID};
 use std::any::type_name;
+use crate::isa;
 
 macro_rules! parse_asm_line {
     ( $p:ident label $label:ident ) => {
@@ -35,6 +36,14 @@ macro_rules! parse_asm_line {
     };
     ( $p:ident start_frame ) => {
          $p.start_frame();
+    };
+    ( $p:ident ldfi $name:ident ) => {
+        parse_asm_line!($p loadi fp );
+        parse_asm_line!($p loadr $name );
+    };
+    ( $p:ident stfi $name:ident ) => {
+        parse_asm_line!($p loadi fp );
+        parse_asm_line!($p storer $name );
     };
     ( $p:ident end_frame ) => {
          $p.end_frame();
@@ -133,6 +142,9 @@ impl Program {
         self.add_global_var("sp", 1);
         self.add_global_var("fp", 2);
         self.add_label("_entry");
+        for (callcode, name) in isa::ENV_CALLS.iter().enumerate() {
+            self.add_constant(name, callcode as i32);
+        }
     }
 
     pub fn add_inst(&mut self, opname: &str, arg: i32) {
@@ -224,9 +236,9 @@ impl Program {
     }
 
     pub fn start_frame(&mut self) {
-        self.add_placeholder_inst("ldgi", "fp");
-        self.add_placeholder_inst("ldgi", "sp");
-        self.add_placeholder_inst("stgi", "fp");
+        self.add_placeholder_inst("loadi", "fp");
+        self.add_placeholder_inst("loadi", "sp");
+        self.add_placeholder_inst("storei", "fp");
         let extend_sz = self.cur_label_entry().locals_size;
         if extend_sz > 0 {
             self.add_inst("extend", extend_sz);
@@ -238,7 +250,7 @@ impl Program {
         if drop_sz > 0 {
             self.add_inst("drop", drop_sz);
         }
-        self.add_placeholder_inst("stgi", "fp");
+        self.add_placeholder_inst("storei", "fp");
     }
 
     pub fn relocate(&mut self) {

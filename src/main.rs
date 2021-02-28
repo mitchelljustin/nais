@@ -17,31 +17,21 @@ fn array_on_stack() -> Program {
             start_frame;
 
             push state_len;
-            ldgi fp;
-            push state;
-            add;     // &arr
+            loadi fp;
+            addi state;
             jal fill_array;
             drop 2;
 
             push state_len;
-            ldgi fp;
-            push state;
-            add;     // &arr
+            loadi fp;
+            addi state;
             jal print_array;
             drop 2;
 
-            ldfi state;
-            remi 2;
+            end_frame;
+
             push 0;
-            bne bad_exit;
-
-            end_frame;
-            exit;
-
-       inner bad_exit;
-
-            end_frame;
-            exit 1;
+            ecall exit;
 
         label fill_array;
         arg array len;
@@ -55,16 +45,16 @@ fn array_on_stack() -> Program {
             stfi x;
 
         inner loop;
+            ldfi x;
+            jal mangle;
+            stfi x;
+            ldfi x;
+
             ldfi array;
             ldfi index;
             add; // &arr[index]
 
-            ldfi x;
-            jal mangle;
-            stfi x;
-
-            ldfi x;
-            stgt; // arr[index] = x
+            storer; // arr[index] = x
 
             ldfi index;
             addi 1;
@@ -103,7 +93,7 @@ fn array_on_stack() -> Program {
             ldfi index;
             ldfi array;
             add;
-            ldgt;
+            loadr;
             print;
 
             ldfi index;
@@ -137,7 +127,7 @@ fn main() {
         }
     };
     let mut machine = Machine::new();
-    machine.verbose = false;
+    machine.verbose = true;
     machine.max_cycles = 1_000_000_000;
     machine.copy_code(&binary);
     machine.run();
