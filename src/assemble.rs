@@ -2,9 +2,10 @@ use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::fmt;
 
-use crate::assemble::AssemblyError::UnrelocatedInst;
+use crate::assemble::AssemblyError::MissingTarget;
 use crate::constants::SEG_CODE_START;
 use crate::isa::{Encoder, Inst, OP_INVALID};
+use std::any::type_name;
 
 macro_rules! parse_asm_line {
     ( $p:ident label $label:ident ) => {
@@ -13,29 +14,29 @@ macro_rules! parse_asm_line {
     ( $p:ident inner $label:ident ) => {
         $p.add_inner_label(stringify!($label));
     };
-    ( $p:ident global $label:ident $loc:literal ) => {
-        $p.add_global_var(stringify!($label), $loc);
+    ( $p:ident global $name:ident $loc:literal ) => {
+        $p.add_global_var(stringify!($name), $loc);
     };
     ( $p:ident const $name:ident $value:literal ) => {
         $p.add_constant(stringify!($name), $value);
     };
-    ( $p:ident arg $($label:ident)+ ) => {
+    ( $p:ident arg $($name:ident)+ ) => {
         $(
-            $p.add_arg_var(stringify!($label));
+            $p.add_arg_var(stringify!($name), 1);
         )+
     };
-    ( $p:ident local $($label:ident)+ ) => {
+    ( $p:ident local $($name:ident)+ ) => {
         $(
-            $p.add_local_var(stringify!($label), 1);
+            $p.add_local_var(stringify!($name), 1);
         )+
     };
-    ( $p:ident array $label:ident $size:literal ) => {
-        $p.add_local_var(stringify!($label), $size);
+    ( $p:ident array $name:ident $size:literal ) => {
+        $p.add_local_var(stringify!($name), $size);
     };
-    ( $p:ident frame_start ) => {
+    ( $p:ident start_frame ) => {
          $p.start_frame();
     };
-    ( $p:ident frame_end ) => {
+    ( $p:ident end_frame ) => {
          $p.end_frame();
     };
     ( $p:ident $mnem:ident $label:ident ) => {
@@ -76,8 +77,8 @@ macro_rules! program_from_asm {
 #[derive(Clone)]
 struct LabelEntry {
     code_loc: i32,
-    local_size: i32,
-    nargs: i32,
+    locals_size: i32,
+    args_size: i32,
     frame_labels: HashMap<String, i32>,
 }
 
@@ -97,15 +98,15 @@ pub struct Program {
 
 #[derive(Clone, Debug)]
 pub enum AssemblyError {
-    UnrelocatedInst(Inst, String),
+    MissingTarget(Inst, String),
     NoSuchOp(usize, String),
 }
 
 impl Display for AssemblyError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            UnrelocatedInst(inst, target) => {
-                write!(f, "UnrelocatedInstruction({} \"{}\")", inst, target)
+            MissingTarget(inst, target) => {
+                write!(f, "MissingTarget({} \"{}\")", inst, target)
             },
             other => write!(f, "{:?}", other)
         }
@@ -176,8 +177,8 @@ impl Program {
         self.scope_labels.insert(String::from(name), LabelEntry {
             code_loc: self.instructions.len() as i32,
             frame_labels: HashMap::new(),
-            local_size: 0,
-            nargs: 0,
+            locals_size: 0,
+            args_size: 0,
         });
     }
 
@@ -198,18 +199,24 @@ impl Program {
         let label_entry = self.cur_label_entry();
         label_entry.frame_labels.insert(
             String::from(name),
-            label_entry.local_size,
+            label_entry.locals_size,
         );
-        label_entry.local_size += sz;
+        label_entry.locals_size += sz;
+        if sz > 1 {
+            label_entry.frame_labels.insert(
+                format!("{}_len", name),
+                sz
+            );
+        }
     }
 
-    pub fn add_arg_var(&mut self, name: &str) {
+    pub fn add_arg_var(&mut self, name: &str, sz: i32) {
         let label_entry = self.cur_label_entry();
         label_entry.frame_labels.insert(
             String::from(name),
-            -label_entry.nargs - 3, // [..args retaddr savedfp || locals ]
+            -label_entry.args_size - 3, // [..args retaddr savedfp || locals ]
         );
-        label_entry.nargs += 1;
+        label_entry.args_size += sz;
     }
 
     pub fn add_constant(&mut self, name: &str, value: i32) {
@@ -220,13 +227,17 @@ impl Program {
         self.add_placeholder_inst("ldgi", "fp");
         self.add_placeholder_inst("ldgi", "sp");
         self.add_placeholder_inst("stgi", "fp");
-        let extend_sz = self.cur_label_entry().local_size;
-        self.add_inst("extend", extend_sz);
+        let extend_sz = self.cur_label_entry().locals_size;
+        if extend_sz > 0 {
+            self.add_inst("extend", extend_sz);
+        }
     }
 
     pub fn end_frame(&mut self) {
-        let drop_sz = self.cur_label_entry().local_size;
-        self.add_inst("drop", drop_sz);
+        let drop_sz = self.cur_label_entry().locals_size;
+        if drop_sz > 0 {
+            self.add_inst("drop", drop_sz);
+        }
         self.add_placeholder_inst("stgi", "fp");
     }
 
@@ -242,10 +253,11 @@ impl Program {
             }
             // Code label
             if let Some(label_entry) = self.scope_labels.get(target) {
-                inst.arg = Program::calc_pc_offset(
+                let value = Program::calc_pc_offset(
                     label_entry.code_loc,
                     *inst_loc,
                 );
+                inst.arg = value;
                 continue;
             }
             // Global variable
@@ -259,10 +271,11 @@ impl Program {
             let inner_label_name = Program::make_inner_label(scope_label, target);
             // Local code (inner label)
             if let Some(label_entry) = self.scope_labels.get(&inner_label_name) {
-                inst.arg = Program::calc_pc_offset(
+                let value = Program::calc_pc_offset(
                     label_entry.code_loc,
                     *inst_loc,
                 );
+                inst.arg = value;
                 continue;
             }
             // Local frame var
@@ -283,7 +296,7 @@ impl Program {
         errors.extend(
             self.reloc_tab.iter()
                 .map(|(loc, target)|
-                    UnrelocatedInst(self.instructions[*loc], target.clone()))
+                    MissingTarget(self.instructions[*loc], target.clone()))
         );
         if !errors.is_empty() {
             return Err(errors);

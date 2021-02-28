@@ -1,8 +1,8 @@
 #![allow(overflowing_literals)]
 
 use machine::*;
-
 use crate::assemble::Program;
+
 
 #[macro_use]
 mod assemble;
@@ -10,123 +10,57 @@ mod machine;
 mod isa;
 mod constants;
 
-#[allow(dead_code)]
-fn boneless_chacha20() -> Program {
-    program_from_asm! {
-    const c_magic_val 0x8ab3ce;
-    const c_init_msg 9408383;
-
-    local ctr msg;
-        frame_start;
-
-        push 2;
-        store ctr;
-
-        push c_init_msg;
-        store msg;
-    inner loop;
-        load msg;
-        jal round;
-        print;
-        store msg;
-
-        load ctr;
-        subi 1;
-        store ctr;
-
-        load ctr;
-        push 0;
-        bne loop;
-
-        frame_end;
-        exit;
-
-    label round;
-    arg msg;
-    local cnt;
-        frame_start;
-
-        push 4;
-        store cnt;
-    inner loop;
-        load msg;
-        jal qround;
-        store msg;
-
-        load cnt;
-        subi 1;
-        store cnt;
-        load cnt;
-        push 0;
-        bne loop;
-
-        frame_end;
-        ret;
-
-    label qround;
-    arg msg;
-    local x;
-        frame_start;
-
-        load msg;
-        shl 8;
-        store x;
-
-        load msg;
-        shr 24;
-        load x;
-        or;
-
-        load msg;
-        xor;
-
-        addi c_magic_val;
-        store msg;
-
-        frame_end;
-        ret;
-    }
-}
-
 fn array_on_stack() -> Program {
     program_from_asm! {
-        local dummy;
-        array state 16;
-            frame_start;
+        local index;
+        array state 10;
+            start_frame;
 
-            push 16; // len
+            push state_len;
             ldgi fp;
             push state;
             add;     // &arr
             jal fill_array;
             drop 2;
 
-            frame_end;
+            push state_len;
+            ldgi fp;
+            push state;
+            add;     // &arr
+            jal print_array;
+            drop 2;
 
-            extend 20; // for debugging
+            ldfi state;
+            remi 2;
+            push 0;
+            bne bad_exit;
 
+            end_frame;
             exit;
 
+       inner bad_exit;
+
+            end_frame;
+            exit 1;
+
         label fill_array;
-        arg arr len;
+        arg array len;
         local index x;
-            frame_start;
+            start_frame;
 
             push 0;
             stfi index;
 
-            push 1;
+            push 6;
             stfi x;
 
         inner loop;
-            ldfi arr;
+            ldfi array;
             ldfi index;
             add; // &arr[index]
 
             ldfi x;
-            shl 1;
-            addi 1;
-            xori 0xf1f1f1;
+            jal mangle;
             stfi x;
 
             ldfi x;
@@ -140,7 +74,47 @@ fn array_on_stack() -> Program {
             ldfi len;
             blt loop; // if index < len goto loop
 
-            frame_end;
+            end_frame;
+            ret;
+
+        label mangle;
+        arg x;
+            start_frame;
+
+            ldfi x;
+            addi 78;
+            stfi x;
+
+            end_frame;
+            ret;
+
+        label print_array;
+        arg array array_len;
+        local index;
+            start_frame;
+
+            push 0;
+            stfi index;
+
+        inner print_loop;
+            ldfi index;
+            print;
+
+            ldfi index;
+            ldfi array;
+            add;
+            ldgt;
+            print;
+
+            ldfi index;
+            addi 1;
+            stfi index;
+
+            ldfi index;
+            ldfi array_len;
+            blt print_loop;
+
+            end_frame;
             ret;
     }
 }
@@ -162,13 +136,9 @@ fn main() {
             }
         }
     };
-    println!("Binary:\n{}", binary
-        .iter()
-        .enumerate()
-        .map(|(i, inst)| format!("{:04x} {:08x}", i, inst))
-        .collect::<Vec<_>>()
-        .join("\n"));
     let mut machine = Machine::new();
+    machine.verbose = false;
+    machine.max_cycles = 1_000_000_000;
     machine.copy_code(&binary);
     machine.run();
     println!();

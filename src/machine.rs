@@ -33,7 +33,9 @@ pub struct Machine {
     mem_stack: Vec<i32>,
     status: MachineStatus,
     ncycles: usize,
-    encoder: Encoder
+    encoder: Encoder,
+    pub verbose: bool,
+    pub max_cycles: usize
 }
 
 impl Debug for Machine {
@@ -58,6 +60,8 @@ impl Machine {
             status: Idle,
             ncycles: 0,
             encoder: Encoder::new(),
+            verbose: false,
+            max_cycles: MAX_CYCLES,
         }
     }
 
@@ -87,7 +91,7 @@ impl Machine {
     }
 
     fn getsp(&self) -> i32 {
-        return self.mem_stack[SP_ADDR as usize]
+        return self.mem_stack[SP_ADDR as usize];
     }
 
     fn setsp(&mut self, sp: i32) {
@@ -95,7 +99,7 @@ impl Machine {
     }
 
     fn getfp(&self) -> i32 {
-        return self.mem_stack[FP_ADDR as usize]
+        return self.mem_stack[FP_ADDR as usize];
     }
 
     pub fn pop(&mut self) -> Option<i32> {
@@ -135,11 +139,11 @@ impl Machine {
     fn stack_ref(&mut self, addr: i32) -> Option<&mut i32> {
         if addr < SEG_STACK_START || addr >= SEG_STACK_END {
             self.set_status(Error(StackSegFault));
-            return None
+            return None;
         }
         if addr >= self.getsp() {
             self.set_status(Error(StackIndexOutOfBounds));
-            return None
+            return None;
         }
         Some(&mut self.mem_stack[addr as usize])
     }
@@ -154,7 +158,7 @@ impl Machine {
 
     pub fn frame_store(&mut self, val: i32, offset: i32) {
         match self.stack_frame_ref(offset) {
-            None => {},
+            None => {}
             Some(r) => {
                 *r = val;
             }
@@ -164,6 +168,14 @@ impl Machine {
     pub fn jump(&mut self, offset: i32) {
         let pc = self.getpc();
         self.setpc(pc + offset);
+    }
+
+    pub fn print(&mut self, x: i32) {
+        if self.verbose {
+            println!("\n>> {:8x} [{}]\n", x, x);
+        } else {
+            println!("{:8x} [{}]", x, x);
+        }
     }
 
     pub fn global_store(&mut self, addr: i32, x: i32) {
@@ -201,15 +213,17 @@ impl Machine {
         let inst = match self.inst_at_addr(pc) {
             Err(e) => {
                 self.set_status(Error(e));
-                return
-            },
+                return;
+            }
             Ok(inst) => inst
         };
-        println!("{:<4} {}", self.ncycles, inst);
+        if self.verbose {
+            println!("{:<4} {}", self.ncycles, inst);
+        }
         (inst.op.f)(self, inst.arg);
         self.jump(1);
         self.ncycles += 1;
-        if self.ncycles == MAX_CYCLES {
+        if self.ncycles == self.max_cycles {
             self.set_status(Error(MaxCyclesReached));
         }
     }
@@ -222,11 +236,10 @@ impl Machine {
         let bin_inst = self.mem_code[inst_addr];
         match self.encoder.decode(bin_inst) {
             None => Err(CannotDecodeInst(bin_inst)),
-            Some(inst) => Ok(Inst{
+            Some(inst) => Ok(Inst {
                 addr: Some(addr),
                 ..inst
             })
         }
     }
-
 }

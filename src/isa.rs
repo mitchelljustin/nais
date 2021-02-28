@@ -114,8 +114,7 @@ pub fn breakp(m: &mut Machine, _: i32) {
 
 pub fn print(m: &mut Machine, _: i32) {
     if let Some(x) = m.pop() {
-        println!("\n>> {:08x} [{}]\n", x, x);
-        m.push(x);
+        m.print(x);
     }
 }
 
