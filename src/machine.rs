@@ -1,5 +1,6 @@
-use std::fmt;
+use std::{cmp, fmt};
 use std::fmt::{Debug, Formatter, Write};
+use std::ops::Range;
 
 use MachineError::*;
 use MachineStatus::*;
@@ -36,7 +37,7 @@ pub struct Machine {
     ncycles: usize,
     encoder: Encoder,
     pub verbose: bool,
-    pub max_cycles: usize
+    pub max_cycles: usize,
 }
 
 impl Debug for Machine {
@@ -87,7 +88,7 @@ impl Machine {
         self.mem_stack[PC_ADDR as usize] = loc;
     }
 
-    pub fn getpc(&mut self) -> i32 {
+    pub fn getpc(&self) -> i32 {
         self.mem_stack[PC_ADDR as usize]
     }
 
@@ -110,13 +111,13 @@ impl Machine {
         Some(self.mem_stack[sp as usize])
     }
 
-    pub fn push(&mut self, x: i32) {
+    pub fn push(&mut self, val: i32) {
         let sp = self.getsp();
         if sp >= SEG_STACK_END {
             self.set_status(Error(StackOverflow));
             return;
         }
-        self.mem_stack[sp as usize] = x;
+        self.mem_stack[sp as usize] = val;
         self.setsp(sp + 1);
     }
 
@@ -128,16 +129,23 @@ impl Machine {
         self.mem_stack[SP_ADDR as usize] -= amt;
     }
 
-    fn stack_ref(&mut self, addr: i32) -> Option<&mut i32> {
-        if addr < SEG_STACK_START || addr >= SEG_STACK_END {
-            self.set_status(Error(StackSegFault));
+    fn stack_ref_mut(&mut self, addr: i32) -> Option<&mut i32> {
+        if let Some(err) = self.check_stack_addr(addr) {
+            self.set_status(Error(err));
             return None;
+        }
+
+        Some(&mut self.mem_stack[addr as usize])
+    }
+
+    fn check_stack_addr(&self, addr: i32) -> Option<MachineError> {
+        if addr < SEG_STACK_START || addr >= SEG_STACK_END {
+            return Some(StackSegFault);
         }
         if addr >= self.getsp() {
-            self.set_status(Error(StackIndexOutOfBounds));
-            return None;
+            return Some(StackIndexOutOfBounds);
         }
-        Some(&mut self.mem_stack[addr as usize])
+        None
     }
 
     pub fn jump(&mut self, offset: i32) {
@@ -145,45 +153,68 @@ impl Machine {
         self.setpc(pc + offset);
     }
 
-    pub fn print(&mut self, x: i32) {
+    pub fn print(&mut self, val: i32) {
         if self.verbose {
-            println!("\n>> {:8x} [{}]\n", x, x);
+            println!("\n>> {:8x} [{}]\n", val, val);
         } else {
-            println!("{:8x} [{}]", x, x);
+            println!("{:8x} [{}]", val, val);
         }
     }
 
-    pub fn global_store(&mut self, addr: i32, x: i32) {
-        if let Some(r) = self.stack_ref(addr) {
-            *r = x;
+    pub fn store(&mut self, addr: i32, val: i32) {
+        if let Some(r) = self.stack_ref_mut(addr) {
+            *r = val;
         }
     }
 
-    pub fn global_load(&mut self, addr: i32) -> Option<i32> {
-        match self.stack_ref(addr) {
+    pub fn load(&mut self, addr: i32) -> Option<i32> {
+        match self.stack_ref_mut(addr) {
             None => None,
             Some(r) => Some(*r),
         }
     }
 
-    pub fn stack_dump(&self) -> String {
+    pub fn code_dump(&self, range: Range<i32>) -> String {
+        let pc = self.getpc();
+        let lo = cmp::max(SEG_CODE_START, pc + range.start);
+        let hi = cmp::min(SEG_CODE_END, pc + range.end);
         let mut out = String::new();
-        let stack_iter = (0..self.getsp())
-            .map(|i| (i, self.mem_stack[i as usize]));
-        for (addr, x) in stack_iter {
-            let extra = match addr {
-                PC_ADDR => "pc",
-                SP_ADDR => "sp",
-                FP_ADDR => "fp",
-                BOUNDARY_ADDR => "boundary",
-                _ => ""
+        for addr in lo..=hi {
+            let extra = if addr == pc { "<========= PC" } else { "" };
+            match self.inst_at_addr(addr) {
+                Ok(inst) =>
+                    writeln!(out, "{:<32}{}", inst.to_string(), extra).unwrap(),
+                Err(err) =>
+                    writeln!(out, "ERR FETCHING INST {:?}", err).unwrap()
             };
-            write!(out, "{:04x}. {:8x} [{:8}] {}\n", addr, x, x, extra).unwrap();
         }
         out
     }
 
-    fn cycle(&mut self) {
+    pub fn stack_dump(&self) -> String {
+        (0..self.getsp())
+            .filter_map(|addr| self.stack_addr_dump(addr))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    pub fn stack_addr_dump(&self, addr: i32) -> Option<String> {
+        if let Some(_) = self.check_stack_addr(addr) {
+            return None
+        }
+        let val = self.mem_stack[addr as usize];
+        let extra = match addr {
+            PC_ADDR => "pc",
+            SP_ADDR => "sp",
+            FP_ADDR => "fp",
+            BOUNDARY_ADDR => "boundary",
+            _ => ""
+        };
+        let ret = format!("{:04x}. {:8x} [{:8}] {}", addr, val, val, extra);
+        Some(ret)
+    }
+
+    pub fn cycle(&mut self) {
         let pc = self.getpc();
         let inst = match self.inst_at_addr(pc) {
             Err(e) => {
@@ -203,7 +234,7 @@ impl Machine {
         }
     }
 
-    fn inst_at_addr(&mut self, addr: i32) -> Result<Inst, MachineError> {
+    fn inst_at_addr(&self, addr: i32) -> Result<Inst, MachineError> {
         if addr < SEG_CODE_START || addr >= SEG_CODE_END {
             return Err(CodeSegFault);
         }

@@ -5,7 +5,6 @@ use std::fmt;
 use crate::assemble::AssemblyError::MissingTarget;
 use crate::constants::SEG_CODE_START;
 use crate::isa::{Encoder, Inst, OP_INVALID};
-use std::any::type_name;
 use crate::isa;
 
 macro_rules! parse_asm_line {
@@ -37,13 +36,13 @@ macro_rules! parse_asm_line {
     ( $p:ident start_frame ) => {
          $p.start_frame();
     };
-    ( $p:ident ldfi $name:ident ) => {
+    ( $p:ident loadf $name:ident ) => {
         parse_asm_line!($p loadi fp );
-        parse_asm_line!($p loadr $name );
+        parse_asm_line!($p load $name );
     };
-    ( $p:ident stfi $name:ident ) => {
+    ( $p:ident storef $name:ident ) => {
         parse_asm_line!($p loadi fp );
-        parse_asm_line!($p storer $name );
+        parse_asm_line!($p store $name );
     };
     ( $p:ident end_frame ) => {
          $p.end_frame();

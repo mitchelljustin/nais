@@ -1,10 +1,12 @@
+use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter, Result};
+use std::io;
+use std::io::Write;
 
 use crate::machine::{MachineError, MachineStatus};
 use crate::machine::MachineStatus::Stopped;
 
 use super::Machine;
-use std::collections::HashMap;
 
 pub struct Op {
     pub name: &'static str,
@@ -26,7 +28,7 @@ impl Display for Inst {
             Some(addr) => format!("{:x}", addr)
         };
         let arg_trunc = self.arg & 0xffffff;
-        write!(f, "{} <{:02x}> {:6} {:6x} [{}]",
+        write!(f, "{} <{:02x}> {:6} {:6x} [{:4}]",
                addr, self.opcode, self.op.name, arg_trunc, self.arg)
     }
 }
@@ -48,42 +50,31 @@ pub fn drop(m: &mut Machine, amt: i32) {
     m.drop(amt);
 }
 
-pub fn swap(m: &mut Machine, _: i32) {
-    if let (Some(top), Some(sec)) = (m.pop(), m.pop()) {
-        m.push(top);
-        m.push(sec);
-    }
-}
-
 pub fn loadi(m: &mut Machine, addr: i32) {
-    if let Some(val) = m.global_load(addr) {
+    if let Some(val) = m.load(addr) {
         m.push(val);
     }
 }
 
 pub fn storei(m: &mut Machine, addr: i32) {
     if let Some(val) = m.pop() {
-        m.global_store(addr, val);
+        m.store(addr, val);
     }
 }
 
 
-pub fn loadr(m: &mut Machine, extra_offset: i32) {
+pub fn load(m: &mut Machine, extra_offset: i32) {
     if let Some(addr) = m.pop() {
-        if let Some(val) = m.global_load(addr + extra_offset) {
+        if let Some(val) = m.load(addr + extra_offset) {
             m.push(val);
         }
     }
 }
 
-pub fn storer(m: &mut Machine, extra_offset: i32) {
+pub fn store(m: &mut Machine, extra_offset: i32) {
     if let (Some(addr), Some(val)) = (m.pop(), m.pop()) {
-        m.global_store(addr + extra_offset, val );
+        m.store(addr + extra_offset, val);
     }
-}
-
-pub fn breakp(m: &mut Machine, _: i32) {
-    println!("<<BREAKPOINT>>\n{}", m.stack_dump());
 }
 
 pub fn print(m: &mut Machine, _: i32) {
@@ -105,15 +96,80 @@ pub fn ecall(m: &mut Machine, callcode: i32) {
 
     match call_name {
         "exit" => {
-            if let Some(status) = m.pop() {
-                if status == 0 {
-                    m.set_status(Stopped);
+            match m.pop() {
+                Some(0) =>
+                    m.set_status(Stopped),
+                Some(status) =>
+                    m.set_status(MachineStatus::Error(MachineError::ProgramExit(status))),
+                None => {}
+            }
+        }
+        _ => {}
+    }
+}
+
+fn parse_hex(s: &str) -> Option<i32> {
+    match i32::from_str_radix(s, 16) {
+        Ok(val) => Some(val),
+        Err(_) => None
+    }
+}
+
+pub fn ebreak(m: &mut Machine, _: i32) {
+    println!("\n<<BREAKPOINT>>");
+    m.jump(1);
+    println!("{}", m.code_dump(-5..5));
+    let mut code_start = 0;
+    loop {
+        print!("debug% ");
+        io::stdout().flush().unwrap();
+        let mut line = String::new();
+        if let Err(_) = io::stdin().read_line(&mut line) {
+            return;
+        }
+        let line = line.trim();
+        let parts = line.split(" ").collect::<Vec<_>>();
+        let int_args = parts[1..]
+            .iter()
+            .filter_map(|s| parse_hex(s))
+            .collect::<Vec<_>>();
+        let command = parts[0];
+        match command {
+            "c" | "continue" => return,
+            "n" | "next" => {
+                m.cycle();
+                code_start += 1;
+                println!("{}", m.code_dump((-2 - code_start)..2));
+            }
+            "pc" | "code" => {
+                println!("{}", m.code_dump(-20..20));
+            }
+            "ps" | "stack" => {
+                println!("{}", m.stack_dump());
+            }
+            "s" | "store" => {
+                if let [addr, val] = int_args.as_slice() {
+                    m.store(*addr, *val);
                 } else {
-                    m.set_status(MachineStatus::Error(MachineError::ProgramExit(status)));
+                    println!("format: s|store [addr] [val]");
                 }
             }
-        },
-        _ => {}
+            "l" | "load" => {
+                if let [addr] = int_args.as_slice() {
+                    if let Some(dump) = m.stack_addr_dump(*addr) {
+                        println!("{}", dump);
+                    } else {
+                        println!("Invalid address")
+                    }
+                } else {
+                    println!("format: l|load [addr]");
+                }
+            }
+            "" => continue,
+            _ => {
+                println!("?");
+            }
+        }
     }
 }
 
@@ -137,7 +193,7 @@ pub fn extend(m: &mut Machine, amt: i32) {
     m.extend(amt);
 }
 
-pub fn invld(m: &mut Machine, _: i32) {
+pub fn invalid(m: &mut Machine, _: i32) {
     m.set_status(MachineStatus::Error(MachineError::InvalidInstruction));
 }
 
@@ -150,9 +206,11 @@ macro_rules! with_overflow {
 macro_rules! binary_op_funcs {
     ( $($name:ident ($operator:tt));+; ) => {
         $(
-            pub fn $name(m: &mut Machine, _: i32) {
+            pub fn $name(m: &mut Machine, imm: i32) {
                 if let (Some(top), Some(sec)) = (m.pop(), m.pop()) {
-                    m.push(with_overflow!(top $operator sec));
+                    let mut res = with_overflow!(top $operator sec);
+                    res = with_overflow!(res $operator imm);
+                    m.push(res);
                 }
             }
         )+
@@ -173,9 +231,9 @@ binary_op_funcs! {
 macro_rules! binary_op_imm_funcs {
     ( $($name:ident ($operator:tt));+; ) => {
         $(
-            pub fn $name(m: &mut Machine, arg: i32) {
+            pub fn $name(m: &mut Machine, imm: i32) {
                 if let Some(top) = m.pop() {
-                    m.push(with_overflow!(top $operator arg));
+                    m.push(with_overflow!(top $operator imm));
                 }
             }
         )+
@@ -243,7 +301,7 @@ logical_shift_funcs! {
 
 macro_rules! register_ops {
     ( $($name:ident)+ ) => {
-        pub const OPLIST: &'static [Op] = &[
+        pub const OP_LIST: &'static [Op] = &[
             $(
                 Op {
                     name: stringify!($name),
@@ -255,19 +313,19 @@ macro_rules! register_ops {
 }
 
 register_ops!(
-    invld
-    push extend drop swap
+    invalid
+    push extend drop
     add sub mul div rem and or xor
     addi subi muli divi remi andi ori xori
     sar shl shr
     beq bne blt bge
-    loadi storei loadr storer
+    load store loadi storei
     jump jal ret
-    ecall
-    breakp print
+    ecall ebreak
+    print
 );
 
-pub const OP_INVALID: &'static Op = &OPLIST[0];
+pub const OP_INVALID: &'static Op = &OP_LIST[0];
 
 #[derive(Clone)]
 pub struct Encoder {
@@ -278,12 +336,12 @@ pub struct Encoder {
 
 impl Encoder {
     pub fn new() -> Encoder {
-        let mut enc = Encoder{
+        let mut enc = Encoder {
             name_to_op: HashMap::new(),
             op_to_opcode: HashMap::new(),
             opcode_to_op: HashMap::new(),
         };
-        for (i, op) in OPLIST.iter().enumerate() {
+        for (i, op) in OP_LIST.iter().enumerate() {
             let opcode = i as u8;
             enc.name_to_op.insert(op.name, op);
             enc.op_to_opcode.insert(op.name, opcode);
@@ -297,7 +355,7 @@ impl Encoder {
             None => return None,
             Some(&op) => {
                 let opcode = *self.op_to_opcode.get(opname).unwrap();
-                Some(Inst{
+                Some(Inst {
                     addr: None,
                     op,
                     opcode,
@@ -325,9 +383,11 @@ impl Encoder {
             None => return None,
             Some(&op) => op
         };
-        Some(Inst{
+        Some(Inst {
             addr: None,
-            opcode, op, arg
+            opcode,
+            op,
+            arg,
         })
     }
 }

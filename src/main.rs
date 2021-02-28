@@ -15,6 +15,8 @@ fn array_on_stack() -> Program {
         local index;
         array state 10;
             start_frame;
+            ebreak;
+            jump _exit;
 
             push state_len;
             loadi fp;
@@ -30,6 +32,7 @@ fn array_on_stack() -> Program {
 
             end_frame;
 
+        inner _exit;
             push 0;
             ecall exit;
 
@@ -39,29 +42,28 @@ fn array_on_stack() -> Program {
             start_frame;
 
             push 0;
-            stfi index;
+            storef index;
 
             push 6;
-            stfi x;
+            storef x;
 
         inner loop;
-            ldfi x;
+            loadf x;
             jal mangle;
-            stfi x;
-            ldfi x;
+            storef x;
 
-            ldfi array;
-            ldfi index;
+            loadf x;
+            loadf array;
+            loadf index;
             add; // &arr[index]
+            store; // arr[index] = x
 
-            storer; // arr[index] = x
-
-            ldfi index;
+            loadf index;
             addi 1;
-            stfi index; // index += 1
+            storef index; // index += 1
 
-            ldfi index;
-            ldfi len;
+            loadf index;
+            loadf len;
             blt loop; // if index < len goto loop
 
             end_frame;
@@ -71,9 +73,9 @@ fn array_on_stack() -> Program {
         arg x;
             start_frame;
 
-            ldfi x;
+            loadf x;
             addi 78;
-            stfi x;
+            storef x;
 
             end_frame;
             ret;
@@ -84,24 +86,25 @@ fn array_on_stack() -> Program {
             start_frame;
 
             push 0;
-            stfi index;
+            storef index;
 
         inner print_loop;
-            ldfi index;
+            loadf index;
             print;
 
-            ldfi index;
-            ldfi array;
+            // array[index]
+            loadf index;
+            loadf array;
             add;
-            loadr;
+            load;
             print;
 
-            ldfi index;
+            loadf index;
             addi 1;
-            stfi index;
+            storef index;
 
-            ldfi index;
-            ldfi array_len;
+            loadf index;
+            loadf array_len;
             blt print_loop;
 
             end_frame;
@@ -127,7 +130,7 @@ fn main() {
         }
     };
     let mut machine = Machine::new();
-    machine.verbose = true;
+    machine.verbose = false;
     machine.max_cycles = 1_000_000_000;
     machine.copy_code(&binary);
     machine.run();
