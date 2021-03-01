@@ -14,13 +14,15 @@ use crate::util;
 pub struct CallFrame {
     pub name: String,
     pub start_addr: i32,
+    pub end_addr: i32,
     pub var_names: HashMap<i32, String>,
 }
 
 pub trait DebugInfo {
     fn resolved_label_for_inst(&self, addr: i32) -> Option<(String, String)>;
     fn call_frame_for_inst(&self, addr: i32) -> Option<CallFrame>;
-    fn value_for_label(&self, addr: i32, name: &str) -> Option<(i32, String)>;
+    fn call_frame_with_name(&self, name: &str) -> Option<CallFrame>;
+    fn resolved_value_for_label(&self, addr: i32, target: &str) -> Option<(i32, String)>;
 }
 
 #[derive(Debug, PartialEq, Copy, Clone)]
@@ -156,21 +158,15 @@ impl<'a> Machine<'a> {
             print!("debug% ");
             io::stdout().flush().unwrap();
             let mut line = String::new();
-            if let Err(_) = io::stdin().read_line(&mut line) {
-                return;
-            }
+            io::stdin().read_line(&mut line).unwrap();
             let line = line.trim();
-            let parts = line.split(" ").collect::<Vec<_>>();
-            let int_args = parts[1..]
+            let words = line.split(" ").collect::<Vec<_>>();
+            let command = words[0];
+            let args: &[&str] = &words[1..];
+            let int_args = args
                 .iter()
                 .filter_map(|s| util::parse_hex(s))
                 .collect::<Vec<_>>();
-            let code_range = |i| match int_args[i..] {
-                [a, b] => a..b,
-                [r] => -r..r + 1,
-                _ => -10..11
-            };
-            let command = parts[0];
             match command {
                 "c" | "continue" => {
                     self.set_status(Running);
@@ -179,7 +175,7 @@ impl<'a> Machine<'a> {
                 "n" | "next" => {
                     return;
                 }
-                "pc" | "code" => {
+                "pc" => {
                     match int_args[..] {
                         [mid, len] =>
                             println!("{}", self.code_dump_around(mid, -len..len + 1)),
@@ -187,12 +183,12 @@ impl<'a> Machine<'a> {
                             println!("{}", self.code_dump_around(mid, -4..5)),
                         [] =>
                             println!("{}", self.code_dump_around_pc(-4..5)),
-                        _ =>
-                            println!("format: pc addr [range]"),
+                        _ => {
+                            println!("format: pc addr [range]");
+                        },
                     }
-                    println!("{}", self.code_dump_around_pc(code_range(0)));
                 }
-                "ps" | "stack" => {
+                "ps" => {
                     match int_args[..] {
                         [mid, len] =>
                             println!("{}", self.stack_mem_dump((mid - len)..(mid + len + 1))),
@@ -201,17 +197,17 @@ impl<'a> Machine<'a> {
                         [] =>
                             println!("{}", self.stack_dump()),
                         _ =>
-                            println!("format: ps addr [range]"),
+                            println!("format: ps [addr] [range]"),
                     }
                 }
-                "pm" | "machine" => {
+                "pm"  => {
                     println!("{:?}", self);
                 }
                 "s" | "store" => {
                     if let [addr, val] = int_args[..] {
                         self.unsafe_store(addr, val);
                     } else {
-                        println!("format: s|store addr val");
+                        println!("format: s addr val");
                     }
                 }
                 "x" | "exit" => {
