@@ -144,6 +144,7 @@ pub struct CallFrame {
 
 #[derive(Clone, Debug)]
 pub enum AssemblyError {
+    NeedToDefineEntryLabel,
     MissingTarget(Inst, String),
     NoSuchOp(i32, String),
 }
@@ -197,7 +198,6 @@ impl Assembler {
         self.add_global_var("pc", PC_ADDR);
         self.add_global_var("sp", SP_ADDR);
         self.add_global_var("fp", FP_ADDR);
-        self.add_top_level_label("_entry");
         for (callcode, name) in isa::ENV_CALLS.iter().enumerate() {
             self.add_constant(name, callcode as i32);
         }
@@ -260,9 +260,17 @@ impl Assembler {
     }
 
     fn cur_frame(&mut self) -> &mut CallFrame {
-        self.call_frames
-            .get_mut(&self.cur_frame_name)
-            .expect("current label not found")
+        match self.call_frames.get(&self.cur_frame_name) {
+            Some(_) => {
+                self.call_frames.get_mut(&self.cur_frame_name).unwrap()
+            },
+            None => {
+                const DEFAULT_ENTRY_LABEL: &str = "_entry";
+                self.errors.push(AssemblyError::NeedToDefineEntryLabel);
+                self.add_top_level_label(DEFAULT_ENTRY_LABEL);
+                self.call_frames.get_mut(DEFAULT_ENTRY_LABEL).unwrap()
+            }
+        }
     }
 
     pub fn add_global_var(&mut self, name: &str, abs_loc: i32) {
@@ -341,7 +349,7 @@ impl Assembler {
         if let Some(label_entry) = self.call_frames.get(&target) {
             let value = Assembler::calc_inst_offset(
                 label_entry.addr_range.start,
-                inst_loc,
+                inst_addr,
             );
             return Some(ResolvedLabel {
                 inst_addr,
@@ -369,7 +377,7 @@ impl Assembler {
         if let Some(&addr) = frame.inner_labels.get(&target) {
             let value = Assembler::calc_inst_offset(
                 addr,
-                inst_loc,
+                inst_addr,
             );
             return Some(ResolvedLabel {
                 inst_addr,
@@ -433,8 +441,8 @@ impl Assembler {
         )
     }
 
-    fn calc_inst_offset(target_loc: i32, inst_loc: usize) -> i32 {
-        target_loc - (inst_loc as i32) - 1
+    fn calc_inst_offset(target_addr: i32, inst_addr: i32) -> i32 {
+        target_addr - inst_addr - 1
     }
 }
 

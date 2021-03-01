@@ -15,6 +15,7 @@ mod util;
 
 fn array_on_stack() -> Assembler {
     program_from_asm! {
+        label _entry;
         array state 10;
             start_frame;
 
@@ -70,6 +71,8 @@ fn array_on_stack() -> Assembler {
         label increment;
         arg val;
             start_frame;
+
+            ebreak;
 
             loadf val;
             addi 1;

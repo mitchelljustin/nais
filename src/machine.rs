@@ -17,11 +17,12 @@ pub enum MachineError {
     IllegalSPReductionBelowMin { newsp: i32 },
     IllegalDirectWriteSP,
     IllegalDirectWritePC,
-    PCSegFault { newpc: i32 },
+    ImminentPCSegFault { newpc: i32 },
     InvalidInstruction,
     CannotDecodeInst(i32),
     StackAccessBeyondSP { sp: i32, addr: i32 },
     StackAccessSegFault { addr: i32 },
+    CodeAccessSegFault { addr: i32 },
     ProgramExit(i32),
     NoSuchEnvCall(i32),
     MaxCyclesReached,
@@ -89,6 +90,10 @@ impl Machine {
         addr >= SEG_STACK_START && addr < SEG_STACK_END
     }
 
+    fn code_access_ok(&self, addr: i32) -> bool {
+        addr >= SEG_CODE_START && addr < SEG_CODE_END
+    }
+
     pub fn unsafe_store(&mut self, addr: i32, val: i32) {
         if !self.stack_access_ok(addr) {
             self.set_error(StackAccessSegFault { addr });
@@ -106,8 +111,8 @@ impl Machine {
     }
 
     pub fn setpc(&mut self, newpc: i32) {
-        if newpc < SEG_CODE_START || newpc >= SEG_CODE_END {
-            self.set_error(PCSegFault { newpc });
+        if !self.code_access_ok(newpc) {
+            self.set_error(ImminentPCSegFault { newpc });
             return;
         }
         self.unsafe_store(PC_ADDR, newpc);
@@ -166,8 +171,8 @@ impl Machine {
                     match int_args[..] {
                         [mid, len] =>
                             println!("{}", self.code_dump_around(mid, -len..len + 1)),
-                        [mid] =>
-                            println!("{}", self.code_dump_around(mid, -4..5)),
+                        [len] =>
+                            println!("{}", self.code_dump_around_pc(-len..len+1)),
                         [] =>
                             println!("{}", self.code_dump_around_pc(-4..5)),
                         _ => {
@@ -397,8 +402,11 @@ impl Machine {
     }
 
     fn inst_at_addr(&self, addr: i32) -> Result<Inst, MachineError> {
-        let inst_addr = (addr - SEG_CODE_START) as usize;
-        let bin_inst = self.mem_code[inst_addr];
+        if !self.code_access_ok(addr) {
+            return Err(CodeAccessSegFault { addr });
+        }
+        let inst_loc = (addr - SEG_CODE_START) as usize;
+        let bin_inst = self.mem_code[inst_loc];
         match self.encoder.decode(bin_inst) {
             None => Err(CannotDecodeInst(bin_inst)),
             Some(inst) => Ok(Inst {
