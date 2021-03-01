@@ -5,40 +5,9 @@ use crate::machine::{MachineError, MachineStatus};
 use crate::machine::MachineStatus::Stopped;
 
 use super::Machine;
-use crate::constants::FP_ADDR;
+use crate::constants::{FP_ADDR};
 
-pub struct Op {
-    pub name: &'static str,
-    pub f: fn(&mut Machine, i32),
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct Inst {
-    pub addr: Option<i32>,
-    pub op: &'static Op,
-    pub opcode: u8,
-    pub arg: i32,
-}
-
-impl Display for Inst {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        let addr = match self.addr {
-            None => String::new(),
-            Some(addr) => format!("{:x}", addr)
-        };
-        let arg_trunc = self.arg & 0xffffff;
-        write!(f, "{} {:6} {:6x} [{:4}]",
-               addr, self.op.name, arg_trunc, self.arg)
-    }
-}
-
-impl Debug for Op {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        f.debug_struct("OpFn")
-            .field("name", &self.name)
-            .finish()
-    }
-}
+// --- START OP FUNCTIONS ---
 
 pub fn push(m: &mut Machine, val: i32) {
     let sp = m.getsp();
@@ -48,34 +17,26 @@ pub fn push(m: &mut Machine, val: i32) {
 
 pub fn pop(m: &mut Machine) -> Option<i32> {
     let newsp = m.getsp() - 1;
+    let top = m.load(newsp);
     m.setsp(newsp);
-    m.load(newsp)
+    top
 }
 
 pub fn loadi(m: &mut Machine, addr: i32) {
-    let sp = m.getsp();
-    if addr >= sp {
-        m.set_error(MachineError::StackAccessOutOfBounds { sp, addr });
-    }
     if let Some(val) = m.load(addr) {
         push(m, val);
     }
 }
 
 pub fn storei(m: &mut Machine, addr: i32) {
-    let sp = m.getsp();
-    if addr >= sp {
-        m.set_error(MachineError::StackAccessOutOfBounds { sp, addr });
-        return;
-    }
     if let Some(val) = pop(m) {
         m.store(addr, val);
     }
 }
 
-pub fn addsp(m: &mut Machine, val: i32) {
+pub fn addsp(m: &mut Machine, offset: i32) {
     let sp = m.getsp();
-    m.setsp(sp + val);
+    m.setsp(sp + offset);
 }
 
 pub fn load(m: &mut Machine, offset: i32) {
@@ -266,6 +227,41 @@ macro_rules! logical_shift_funcs {
 logical_shift_funcs! {
     shl ( << );
     shr ( >> );
+}
+
+// --- END OP FUNCTIONS ---
+
+pub struct Op {
+    pub name: &'static str,
+    pub f: fn(&mut Machine, i32),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Inst {
+    pub addr: Option<i32>,
+    pub op: &'static Op,
+    pub opcode: u8,
+    pub arg: i32,
+}
+
+impl Display for Inst {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        let addr = match self.addr {
+            None => String::new(),
+            Some(addr) => format!("{:x}", addr)
+        };
+        let arg_trunc = self.arg & 0xffffff;
+        write!(f, "{} {:6} {:6x} [{:4}]",
+               addr, self.op.name, arg_trunc, self.arg)
+    }
+}
+
+impl Debug for Op {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        f.debug_struct("OpFn")
+            .field("name", &self.name)
+            .finish()
+    }
 }
 
 macro_rules! register_ops {

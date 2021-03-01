@@ -25,12 +25,14 @@ pub trait DebugInfo {
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum MachineError {
-    IllegalStackPop,
+    IllegalSPReductionBelowMin { newsp: i32 },
+    IllegalDirectWriteSP,
+    IllegalDirectWritePC,
     PCSegFault { newpc: i32 },
     InvalidInstruction,
     CannotDecodeInst(i32),
-    StackAccessOutOfBounds { sp: i32, addr: i32 },
-    StackSegFault { addr: i32 },
+    StackAccessBeyondSP { sp: i32, addr: i32 },
+    StackAccessSegFault { addr: i32 },
     ProgramExit(i32),
     NoSuchEnvCall(i32),
     MaxCyclesReached,
@@ -67,33 +69,51 @@ impl<'a> Machine<'a> {
         self.mem_stack[SP_ADDR as usize]
     }
 
-    fn check_stack_addr(&self, addr: i32) -> Option<MachineError> {
-        if addr < SEG_STACK_START || addr >= SEG_STACK_END {
-            return Some(StackSegFault { addr });
-        }
-        None
-    }
-
-    fn stack_ref_mut(&mut self, addr: i32) -> Option<&mut i32> {
-        if let Some(err) = self.check_stack_addr(addr) {
-            self.set_status(Error(err));
+    pub fn load(&mut self, addr: i32) -> Option<i32> {
+        let sp = self.getsp();
+        if addr >= sp {
+            self.set_error(MachineError::StackAccessBeyondSP { sp, addr });
             return None;
         }
-
-        Some(&mut self.mem_stack[addr as usize])
+        self.unsafe_load(addr)
     }
 
-    pub fn store(&mut self, addr: i32, val: i32) {
-        if let Some(ptr) = self.stack_ref_mut(addr) {
-            *ptr = val;
+    pub fn store(&mut self, addr: i32, val: i32) -> bool {
+        let sp = self.getsp();
+        if addr >= sp {
+            self.set_error(MachineError::StackAccessBeyondSP { sp, addr });
+            return false;
         }
+        if addr == SP_ADDR {
+            self.set_error(MachineError::IllegalDirectWriteSP);
+            return false;
+        }
+        if addr == PC_ADDR {
+            self.set_error(MachineError::IllegalDirectWritePC);
+            return false;
+        }
+        self.unsafe_store(addr, val);
+        true
     }
 
-    pub fn load(&mut self, addr: i32) -> Option<i32> {
-        match self.stack_ref_mut(addr) {
-            None => None,
-            Some(ptr) => Some(*ptr),
+    fn stack_access_ok(&self, addr: i32) -> bool {
+        addr >= SEG_STACK_START && addr < SEG_STACK_END
+    }
+
+    pub fn unsafe_store(&mut self, addr: i32, val: i32) {
+        if !self.stack_access_ok(addr) {
+            self.set_error(StackAccessSegFault { addr });
+            return;
         }
+        self.mem_stack[addr as usize] = val;
+    }
+
+    pub fn unsafe_load(&mut self, addr: i32) -> Option<i32> {
+        if !self.stack_access_ok(addr) {
+            self.set_error(StackAccessSegFault { addr });
+            return None;
+        }
+        Some(self.mem_stack[addr as usize])
     }
 
     pub fn setpc(&mut self, newpc: i32) {
@@ -101,15 +121,15 @@ impl<'a> Machine<'a> {
             self.set_error(PCSegFault { newpc });
             return;
         }
-        self.store(PC_ADDR, newpc);
+        self.unsafe_store(PC_ADDR, newpc);
     }
 
     pub fn setsp(&mut self, newsp: i32) {
-        if newsp <= SP_MINIMUM {
-            self.set_error(IllegalStackPop);
+        if newsp < SP_MINIMUM {
+            self.set_error(IllegalSPReductionBelowMin { newsp });
             return;
         }
-        self.store(SP_ADDR, newsp);
+        self.unsafe_store(SP_ADDR, newsp);
     }
 
     pub fn print(&mut self, val: i32) {
@@ -189,7 +209,7 @@ impl<'a> Machine<'a> {
                 }
                 "s" | "store" => {
                     if let [addr, val] = int_args[..] {
-                        self.store(addr, val);
+                        self.unsafe_store(addr, val);
                     } else {
                         println!("format: s|store addr val");
                     }
@@ -301,7 +321,7 @@ impl<'a> Machine<'a> {
     }
 
     pub fn stack_addr_dump(&self, addr: i32) -> Option<String> {
-        if let Some(_) = self.check_stack_addr(addr) {
+        if !self.stack_access_ok(addr) {
             return None;
         }
         let val = self.mem_stack[addr as usize];
