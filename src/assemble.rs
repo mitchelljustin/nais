@@ -1,13 +1,12 @@
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::fmt;
+use std::ops::Range;
 
 use crate::assemble::AssemblyError::MissingTarget;
-use crate::constants::{SEG_CODE_START, PC_ADDR, SP_ADDR, FP_ADDR};
+use crate::constants::{FP_ADDR, PC_ADDR, SEG_CODE_START, SP_ADDR};
 use crate::isa::{Encoder, Inst, OP_INVALID};
 use crate::isa;
-use crate::machine::{CallFrame, DebugInfo};
-use crate::unwrap_or_return;
 
 macro_rules! parse_asm_line {
     ( $p:ident label $label:ident ) => {
@@ -77,13 +76,47 @@ macro_rules! program_from_asm {
     };
 }
 
+pub struct DebugInfo {
+    pub call_frames: HashMap<String, CallFrame>,
+    pub frame_name_for_inst: HashMap<i32, String>,
+    pub resolved_labels: HashMap<i32, ResolvedLabel>,
+}
+
+impl DebugInfo {
+    pub fn new() -> DebugInfo {
+        DebugInfo {
+            call_frames: HashMap::new(),
+            frame_name_for_inst: HashMap::new(),
+            resolved_labels: HashMap::new(),
+        }
+    }
+}
+
+impl From<Assembler> for DebugInfo {
+    fn from(p: Assembler) -> Self {
+        let mut info = DebugInfo::new();
+        info.resolved_labels = p.resolved_labels.clone();
+        info.call_frames = p.call_frames.clone();
+        info.frame_name_for_inst = p.frame_name_for_inst.clone();
+        info
+    }
+}
+
 #[derive(Copy, Clone)]
 pub enum LabelType {
     Constant,
     GlobalVar,
-    Subroutine,
+    TopLevel,
     InnerLabel,
     FrameVar,
+}
+
+#[derive(Clone)]
+pub struct ResolvedLabel {
+    pub inst_addr: i32,
+    pub target: String,
+    pub value: i32,
+    pub label_type: LabelType,
 }
 
 impl Display for LabelType {
@@ -91,7 +124,7 @@ impl Display for LabelType {
         f.write_str(match self {
             LabelType::Constant => "C",
             LabelType::GlobalVar => "G",
-            LabelType::Subroutine => "S",
+            LabelType::TopLevel => "T",
             LabelType::InnerLabel => "I",
             LabelType::FrameVar => "F",
         })
@@ -100,20 +133,19 @@ impl Display for LabelType {
 
 
 #[derive(Clone)]
-struct LabelEntry {
-    name: String,
-    start_addr: i32,
-    end_addr: i32,
-    frame_vars: HashMap<String, i32>,
-    inner_labels: HashMap<String, i32>,
-    locals_size: i32,
-    args_size: i32,
+pub struct CallFrame {
+    pub name: String,
+    pub addr_range: Range<i32>,
+    pub frame_vars: HashMap<String, i32>,
+    pub inner_labels: HashMap<String, i32>,
+    pub locals_size: i32,
+    pub args_size: i32,
 }
 
 #[derive(Clone, Debug)]
 pub enum AssemblyError {
     MissingTarget(Inst, String),
-    NoSuchOp(usize, String),
+    NoSuchOp(i32, String),
 }
 
 impl Display for AssemblyError {
@@ -127,27 +159,32 @@ impl Display for AssemblyError {
     }
 }
 
+
 pub struct Assembler {
     instructions: Vec<Inst>,
-    top_level_labels: HashMap<String, LabelEntry>,
+    call_frames: HashMap<String, CallFrame>,
+    frame_name_for_inst: HashMap<i32, String>,
     cur_frame_name: String,
-    frame_name_for_inst: Vec<String>,
     global_vars: HashMap<String, i32>,
     constants: HashMap<String, i32>,
     reloc_tab: HashMap<usize, String>,
-    resolved_labels: HashMap<(usize, String), (i32, LabelType)>,
+    resolved_labels: HashMap<i32, ResolvedLabel>,
     encoder: Encoder,
     errors: Vec<AssemblyError>,
+}
+
+fn inst_loc_to_addr(loc: usize) -> i32 {
+    loc as i32 + SEG_CODE_START
 }
 
 impl Assembler {
     pub fn new() -> Assembler {
         Assembler {
             instructions: Vec::new(),
-            top_level_labels: HashMap::new(),
+            call_frames: HashMap::new(),
             global_vars: HashMap::new(),
             constants: HashMap::new(),
-            frame_name_for_inst: Vec::new(),
+            frame_name_for_inst: HashMap::new(),
             reloc_tab: HashMap::new(),
             resolved_labels: HashMap::new(),
             cur_frame_name: String::new(),
@@ -167,46 +204,48 @@ impl Assembler {
     }
 
     pub fn add_inst(&mut self, opname: &str, arg: i32) {
-        let loc = self.instructions.len();
-        let addr = Some(SEG_CODE_START + loc as i32);
+        let addr = self.next_inst_addr();
         let inst = match self.encoder.make_inst(opname, arg) {
             None => {
                 self.errors.push(AssemblyError::NoSuchOp(
-                    loc, String::from(opname)));
+                    addr, opname.to_string()));
                 self.instructions.push(Inst {
                     opcode: 0x00,
                     op: OP_INVALID,
+                    addr: Some(addr),
                     arg,
-                    addr,
                 });
                 return;
             }
             Some(inst) => inst
         };
         self.instructions.push(Inst {
-            addr,
+            addr: Some(addr),
             ..inst
         });
-        self.frame_name_for_inst.push(self.cur_frame_name.clone());
+        self.frame_name_for_inst.insert(addr, self.cur_frame_name.clone());
     }
 
-    fn cur_code_loc(&self) -> i32 {
-        self.instructions.len() as i32
+    fn next_inst_loc(&self) -> usize {
+        self.instructions.len()
+    }
+
+    fn next_inst_addr(&self) -> i32 {
+        inst_loc_to_addr(self.next_inst_loc())
     }
 
     pub fn add_placeholder_inst(&mut self, opname: &str, label: &str) {
-        self.reloc_tab.insert(self.instructions.len(), String::from(label));
+        self.reloc_tab.insert(self.next_inst_loc(), label.to_string());
         self.add_inst(opname, 0);
     }
 
     pub fn add_top_level_label(&mut self, name: &str) {
         if self.cur_frame_name != "" {
-            self.cur_frame().end_addr = self.cur_code_loc();
+            self.cur_frame().addr_range.end = self.next_inst_addr();
         }
-        self.top_level_labels.insert(name.to_string(), LabelEntry {
+        self.call_frames.insert(name.to_string(), CallFrame {
             name: name.to_string(),
-            start_addr: self.cur_code_loc(),
-            end_addr: -1,
+            addr_range: self.next_inst_addr()..-1,
             frame_vars: HashMap::new(),
             inner_labels: HashMap::new(),
             locals_size: 0,
@@ -216,12 +255,12 @@ impl Assembler {
     }
 
     pub fn add_inner_label(&mut self, name: &str) {
-        let addr = self.cur_code_loc();
+        let addr = self.next_inst_addr();
         self.cur_frame().inner_labels.insert(name.to_string(), addr);
     }
 
-    fn cur_frame(&mut self) -> &mut LabelEntry {
-        self.top_level_labels
+    fn cur_frame(&mut self) -> &mut CallFrame {
+        self.call_frames
             .get_mut(&self.cur_frame_name)
             .expect("current label not found")
     }
@@ -280,43 +319,73 @@ impl Assembler {
     }
 
     pub fn finish(&mut self) {
-        self.cur_frame().end_addr = self.cur_code_loc();
+        self.cur_frame().addr_range.end = self.next_inst_addr();
     }
 
-    fn resolve_label(&self, inst_loc: usize, target: &str) -> Option<(i32, LabelType)> {
-        if let Some(&entry) = self.resolved_labels.get(&(inst_loc, target.to_string())) {
-            return Some(entry);
+    fn resolve_label(&self, inst_loc: usize, target: &str) -> Option<ResolvedLabel> {
+        let inst_addr = inst_loc_to_addr(inst_loc);
+        if let Some(entry) = self.resolved_labels.get(&inst_addr) {
+            return Some(entry.clone());
         }
         // Constant
-        if let Some(&value) = self.constants.get(target) {
-            return Some((value, LabelType::Constant));
+        let target = target.to_string();
+        if let Some(&value) = self.constants.get(&target) {
+            return Some(ResolvedLabel {
+                inst_addr,
+                target,
+                value,
+                label_type: LabelType::Constant,
+            });
         }
-        // Subroutine label
-        if let Some(label_entry) = self.top_level_labels.get(target) {
+        // Top level label
+        if let Some(label_entry) = self.call_frames.get(&target) {
             let value = Assembler::calc_inst_offset(
-                label_entry.start_addr,
+                label_entry.addr_range.start,
                 inst_loc,
             );
-            return Some((value, LabelType::Subroutine));
+            return Some(ResolvedLabel {
+                inst_addr,
+                target,
+                value,
+                label_type: LabelType::TopLevel,
+            });
         }
         // Global variable
-        if let Some(&value) = self.global_vars.get(target) {
-            return Some((value, LabelType::GlobalVar));
+        if let Some(&value) = self.global_vars.get(&target) {
+            return Some(ResolvedLabel {
+                inst_addr,
+                target,
+                value,
+                label_type: LabelType::GlobalVar,
+            });
         }
         // Local frame
-        let frame_name = &self.frame_name_for_inst[inst_loc];
-        let frame = self.top_level_labels.get(frame_name).unwrap();
+        let frame_name = self.frame_name_for_inst.get(&inst_addr).unwrap();
+        let frame = match self.call_frames.get(frame_name) {
+            None => return None,
+            Some(f) => f,
+        };
         // Local code (inner label)
-        if let Some(&addr) = frame.inner_labels.get(&target.to_string()) {
+        if let Some(&addr) = frame.inner_labels.get(&target) {
             let value = Assembler::calc_inst_offset(
                 addr,
                 inst_loc,
             );
-            return Some((value, LabelType::InnerLabel));
+            return Some(ResolvedLabel {
+                inst_addr,
+                target,
+                value,
+                label_type: LabelType::InnerLabel,
+            });
         }
         // Local frame var
-        if let Some(value) = frame.frame_vars.get(target) {
-            return Some((*value, LabelType::FrameVar));
+        if let Some(&value) = frame.frame_vars.get(&target) {
+            return Some(ResolvedLabel {
+                inst_addr,
+                target,
+                value,
+                label_type: LabelType::FrameVar,
+            });
         }
         None
     }
@@ -326,12 +395,11 @@ impl Assembler {
         let mut inst_updates = Vec::<(usize, i32)>::new();
         for (inst_loc, target) in self.reloc_tab.iter() {
             let inst_loc = *inst_loc;
+            let inst_addr = inst_loc_to_addr(inst_loc);
             match self.resolve_label(inst_loc, target) {
-                Some((value, label_type)) => {
-                    self.resolved_labels.insert(
-                        (inst_loc, target.clone()),
-                        (value, label_type));
-                    inst_updates.push((inst_loc, value));
+                Some(resolved) => {
+                    inst_updates.push((inst_loc, resolved.value));
+                    self.resolved_labels.insert(inst_addr, resolved);
                 }
                 None => {
                     unrelocated.push((inst_loc, target.clone()));
@@ -381,52 +449,4 @@ impl Display for Assembler {
     }
 }
 
-impl DebugInfo for Assembler {
-    fn resolved_label_for_inst(&self, addr: i32) -> Option<(String, String)> {
-        let loc = (addr - SEG_CODE_START) as usize;
-        let label = match self.reloc_tab.get(&loc) {
-            None => return None,
-            Some(l) => l.clone()
-        };
-        let label_type = match self.resolved_labels.get(&(loc, label.clone())) {
-            None => return None,
-            Some((_, t)) => *t
-        };
-        Some((label, label_type.to_string()))
-    }
-
-    fn call_frame_for_inst(&self, addr: i32) -> Option<CallFrame> {
-        let loc = (addr - SEG_CODE_START) as usize;
-        let name = unwrap_or_return!(self.frame_name_for_inst.get(loc));
-        self.call_frame_with_name(name)
-    }
-
-    fn call_frame_with_name(&self, name: &str) -> Option<CallFrame> {
-        let LabelEntry {
-            name,
-            start_addr,
-            end_addr,
-            frame_vars: frame_labels,
-            ..
-        } = unwrap_or_return!(self.top_level_labels.get(name).cloned());
-        let var_names: HashMap<i32, String> = frame_labels.into_iter()
-            .map(|(name, off)|
-                (off, format!("{}{:10}", if off < 0 { "a:" } else { "" }, name)))
-            .collect();
-        Some(
-            CallFrame {
-                name,
-                start_addr,
-                end_addr,
-                var_names,
-            }
-        )
-    }
-
-    fn resolved_value_for_label(&self, pc: i32, name: &str) -> Option<(i32, String)> {
-        let label_key = ((pc - SEG_CODE_START) as usize, name.to_string());
-        self.resolved_labels.get(&label_key)
-            .map(|&(val, t)| (val, t.to_string()))
-    }
-}
 

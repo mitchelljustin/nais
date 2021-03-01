@@ -7,23 +7,10 @@ use std::ops::Range;
 use MachineError::*;
 use MachineStatus::*;
 
+use crate::assemble::{DebugInfo, ResolvedLabel};
 use crate::constants::{BOUNDARY_ADDR, FP_ADDR, INIT_STACK, MAX_CYCLES, PC_ADDR, SEG_CODE_END, SEG_CODE_START, SEG_LEN, SEG_STACK_END, SEG_STACK_START, SP_ADDR, SP_MINIMUM};
 use crate::isa::{Encoder, Inst};
 use crate::util;
-
-pub struct CallFrame {
-    pub name: String,
-    pub start_addr: i32,
-    pub end_addr: i32,
-    pub var_names: HashMap<i32, String>,
-}
-
-pub trait DebugInfo {
-    fn resolved_label_for_inst(&self, addr: i32) -> Option<(String, String)>;
-    fn call_frame_for_inst(&self, addr: i32) -> Option<CallFrame>;
-    fn call_frame_with_name(&self, name: &str) -> Option<CallFrame>;
-    fn resolved_value_for_label(&self, addr: i32, target: &str) -> Option<(i32, String)>;
-}
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum MachineError {
@@ -49,20 +36,20 @@ pub enum MachineStatus {
     Error(MachineError),
 }
 
-pub struct Machine<'a> {
+pub struct Machine {
     mem_code: Vec<i32>,
     mem_stack: Vec<i32>,
     status: MachineStatus,
     ncycles: usize,
     encoder: Encoder,
-    debug_info: Option<&'a dyn DebugInfo>,
+    debug_info: DebugInfo,
 
     pub verbose: bool,
     pub max_cycles: usize,
     pub enable_debugger: bool,
 }
 
-impl<'a> Machine<'a> {
+impl Machine {
     pub(crate) fn getpc(&self) -> i32 {
         self.mem_stack[PC_ADDR as usize]
     }
@@ -185,7 +172,7 @@ impl<'a> Machine<'a> {
                             println!("{}", self.code_dump_around_pc(-4..5)),
                         _ => {
                             println!("format: pc addr [range]");
-                        },
+                        }
                     }
                 }
                 "ps" => {
@@ -200,7 +187,7 @@ impl<'a> Machine<'a> {
                             println!("format: ps [addr] [range]"),
                     }
                 }
-                "pm"  => {
+                "pm" => {
                     println!("{:?}", self);
                 }
                 "s" | "store" => {
@@ -234,20 +221,18 @@ impl<'a> Machine<'a> {
 
     pub fn code_dump(&self, highlight: i32, addr_range: Range<i32>) -> String {
         let mut out = String::new();
-        let mut cur_frame = match self.debug_info
-            .map(|d| d.call_frame_for_inst(addr_range.start)) {
-            Some(Some(frame)) => {
-                writeln!(out, ".. {}:", frame.name).unwrap();
-                frame.name
+        let mut cur_frame = match self.debug_info.frame_name_for_inst.get(&addr_range.start) {
+            Some(name) => {
+                writeln!(out, ".. {}:", name).unwrap();
+                Some(name.clone())
             }
-            _ => "".to_string(),
+            None => None,
         };
         for addr in addr_range {
-            let maybe_frame = self.debug_info.map(|d| d.call_frame_for_inst(addr));
-            if let Some(Some(frame)) = maybe_frame {
-                if frame.name != cur_frame {
-                    cur_frame = frame.name;
-                    writeln!(out, "{}:", cur_frame).unwrap();
+            if let Some(frame) = self.debug_info.frame_name_for_inst.get(&addr) {
+                if frame != cur_frame.as_ref().unwrap() {
+                    writeln!(out, "{}:", frame).unwrap();
+                    cur_frame = Some(frame.clone());
                 }
             }
             out.write_str("    ").unwrap();
@@ -258,11 +243,13 @@ impl<'a> Machine<'a> {
                     continue;
                 }
             };
-            let maybe_label = self.debug_info.map(|d| d.resolved_label_for_inst(addr));
-            if let Some(Some((lab, lab_type))) = maybe_label {
-                write!(out, " {:10} ({})", lab, lab_type).unwrap();
-            } else {
-                out.write_str(&" ".repeat(15)).unwrap();
+            match self.debug_info.resolved_labels.get(&addr) {
+                Some(ResolvedLabel { target, label_type, .. }) => {
+                    write!(out, " {:10} ({})", target, label_type).unwrap();
+                }
+                None => {
+                    out.write_str(&" ".repeat(15)).unwrap();
+                }
             }
             if addr == highlight {
                 out.write_str(" <========").unwrap()
@@ -279,10 +266,16 @@ impl<'a> Machine<'a> {
     pub fn stack_mem_dump(&self, mut addr_range: Range<i32>) -> String {
         util::clamp(&mut addr_range, SEG_STACK_START..SEG_STACK_END);
         let fp = self.mem_stack[FP_ADDR as usize];
-        let var_names = match self.debug_info
-            .map(|d| d.call_frame_for_inst(self.getpc())) {
-            Some(Some(frame)) => frame.var_names,
-            _ => HashMap::new()
+        let frame = self.debug_info.frame_name_for_inst
+            .get(&self.getpc());
+        let var_for_offset = match frame {
+            Some(frame) => self.debug_info.call_frames
+                .get(frame)
+                .unwrap()
+                .frame_vars.iter()
+                .map(|(name, off)| (off, name))
+                .collect(),
+            None => HashMap::new(),
         };
         let name_info = |addr: i32| {
             let mut out = String::from(" ");
@@ -298,7 +291,7 @@ impl<'a> Machine<'a> {
                 -1 => out.write_str("saved fp ").unwrap(),
                 -2 => out.write_str("retaddr ").unwrap(),
                 _ => {
-                    if let Some(var_name) = var_names.get(&offset_from_fp) {
+                    if let Some(var_name) = var_for_offset.get(&offset_from_fp) {
                         write!(out, "{} ", var_name).unwrap();
                     }
                 }
@@ -325,7 +318,7 @@ impl<'a> Machine<'a> {
         Some(ret)
     }
 
-    pub fn new() -> Machine<'a> {
+    pub fn new() -> Machine {
         let mut mem_stack = vec![0; SEG_LEN as usize];
         for (i, x) in INIT_STACK.iter().enumerate() {
             mem_stack[i] = *x;
@@ -336,7 +329,7 @@ impl<'a> Machine<'a> {
             status: Idle,
             ncycles: 0,
             encoder: Encoder::new(),
-            debug_info: None,
+            debug_info: DebugInfo::new(),
             verbose: false,
             enable_debugger: true,
             max_cycles: MAX_CYCLES,
@@ -349,8 +342,8 @@ impl<'a> Machine<'a> {
         }
     }
 
-    pub fn attach_debug_info(&mut self, debug_info: &'a dyn DebugInfo) {
-        self.debug_info = Some(debug_info);
+    pub fn attach_debug_info(&mut self, debug_info: DebugInfo) {
+        self.debug_info = debug_info;
     }
 
     pub fn set_status(&mut self, status: MachineStatus) {
@@ -416,7 +409,7 @@ impl<'a> Machine<'a> {
     }
 }
 
-impl Debug for Machine<'_> {
+impl Debug for Machine {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("Machine")
             .field("status", &self.status)

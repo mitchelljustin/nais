@@ -4,7 +4,7 @@ use std::env;
 
 use machine::*;
 
-use crate::assemble::Assembler;
+use crate::assemble::{Assembler, DebugInfo};
 
 #[macro_use]
 mod assemble;
@@ -161,7 +161,7 @@ fn main() {
         }
     };
     let mut machine = Machine::new();
-    machine.attach_debug_info(&program);
+    machine.attach_debug_info(DebugInfo::from(program));
     machine.verbose = false;
     machine.enable_debugger = true;
     machine.max_cycles = 1_000_000_000;
