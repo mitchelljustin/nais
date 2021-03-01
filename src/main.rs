@@ -57,8 +57,7 @@ fn array_on_stack() -> Assembler {
             store; // arr[index] = val
 
             loadf index;
-            addi 1;
-            // jal increment;
+            jal increment;
             storef index; // index += 1
 
             loadf index;

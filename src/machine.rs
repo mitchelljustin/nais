@@ -20,7 +20,7 @@ pub struct CallFrame {
 pub trait DebugInfo {
     fn resolved_label_for_inst(&self, addr: i32) -> Option<(String, String)>;
     fn call_frame_for_inst(&self, addr: i32) -> Option<CallFrame>;
-    fn value_for_label(&self, name: &str) -> Option<(i32, String)>;
+    fn value_for_label(&self, addr: i32, name: &str) -> Option<(i32, String)>;
 }
 
 #[derive(Debug, PartialEq, Copy, Clone)]
@@ -214,13 +214,6 @@ impl<'a> Machine<'a> {
                         println!("format: s|store addr val");
                     }
                 }
-                "lc" | "loadcode" => {
-                    if let [addr] = int_args[..] {
-                        println!("{}", self.code_dump_around(addr, code_range(1)));
-                    } else {
-                        println!("format: lc|loadcode addr [range]");
-                    }
-                }
                 "x" | "exit" => {
                     self.set_status(Stopped);
                     return;
@@ -295,12 +288,19 @@ impl<'a> Machine<'a> {
             Some(Some(frame)) => frame.var_names,
             _ => HashMap::new()
         };
-        let extra_frame_info = |addr: i32| {
-            let mut out = String::new();
+        let name_info = |addr: i32| {
+            let mut out = String::from(" ");
+            out.write_str(match addr {
+                PC_ADDR => "pc ",
+                SP_ADDR => "sp ",
+                FP_ADDR => "fp ",
+                BOUNDARY_ADDR => "boundary ",
+                _ => ""
+            }).unwrap();
             let offset_from_fp = addr - fp;
             match offset_from_fp {
-                -1 => out.write_str("saved fp").unwrap(),
-                -2 => out.write_str("retaddr").unwrap(),
+                -1 => out.write_str("saved fp ").unwrap(),
+                -2 => out.write_str("retaddr ").unwrap(),
                 _ => {
                     if let Some(var_name) = var_names.get(&offset_from_fp) {
                         write!(out, "{} ", var_name).unwrap();
@@ -315,7 +315,7 @@ impl<'a> Machine<'a> {
         addr_range
             .filter_map(|addr| self.stack_addr_dump(addr))
             .enumerate()
-            .map(|(addr, s)| s + &extra_frame_info(addr as i32))
+            .map(|(addr, val)| val + &name_info(addr as i32))
             .collect::<Vec<_>>()
             .join("\n")
     }
@@ -325,14 +325,7 @@ impl<'a> Machine<'a> {
             return None;
         }
         let val = self.mem_stack[addr as usize];
-        let extra = match addr {
-            PC_ADDR => "pc",
-            SP_ADDR => "sp",
-            FP_ADDR => "fp",
-            BOUNDARY_ADDR => "boundary",
-            _ => ""
-        };
-        let ret = format!("{:04x}. {:8x} [{:8}] {}", addr, val, val, extra);
+        let ret = format!("{:04x}. {:8x} [{:8}]", addr, val, val);
         Some(ret)
     }
 

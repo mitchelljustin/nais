@@ -133,7 +133,7 @@ pub struct Assembler {
     frame_name_for_inst: Vec<String>,
     cur_frame_name: String,
     reloc_tab: HashMap<usize, String>,
-    resolved_labels: HashMap<String, (i32, LabelType)>,
+    resolved_labels: HashMap<(usize, String), (i32, LabelType)>,
     encoder: Encoder,
     errors: Vec<AssemblyError>,
 }
@@ -242,12 +242,12 @@ impl Assembler {
     }
 
     pub fn add_arg_var(&mut self, name: &str, sz: i32) {
-        let label_entry = self.cur_frame();
-        label_entry.frame_labels.insert(
+        let frame = self.cur_frame();
+        frame.frame_labels.insert(
             String::from(name),
-            -label_entry.args_size - 3, // [..args retaddr savedfp || locals ]
+            -frame.args_size - 3, // [..args retaddr savedfp || locals ]
         );
-        label_entry.args_size += sz;
+        frame.args_size += sz;
     }
 
     pub fn add_constant(&mut self, name: &str, value: i32) {
@@ -272,15 +272,15 @@ impl Assembler {
         self.add_placeholder_inst("storei", "fp");
     }
 
-    fn resolve_label(&self, target: &str, inst_loc: usize) -> Option<(i32, LabelType)> {
-        if let Some(&entry) = self.resolved_labels.get(target) {
+    fn resolve_label(&self, inst_loc: usize, target: &str) -> Option<(i32, LabelType)> {
+        if let Some(&entry) = self.resolved_labels.get(&(inst_loc, target.to_string())) {
             return Some(entry);
         }
         // Constant
         if let Some(&value) = self.constants.get(target) {
             return Some((value, LabelType::Constant));
         }
-        // Code label
+        // Subroutine label
         if let Some(label_entry) = self.label_entries.get(target) {
             let value = Assembler::calc_inst_offset(
                 label_entry.start_addr,
@@ -293,9 +293,9 @@ impl Assembler {
             return Some((value, LabelType::GlobalVar));
         }
         // Local scope
-        let scope_label = &self.frame_name_for_inst[inst_loc];
-        let scope_entry = self.label_entries.get(scope_label).unwrap();
-        let inner_label_name = Assembler::make_inner_label(scope_label, target);
+        let frame_name = &self.frame_name_for_inst[inst_loc];
+        let frame = self.label_entries.get(frame_name).unwrap();
+        let inner_label_name = Assembler::make_inner_label(frame_name, target);
         // Local code (inner label)
         if let Some(label_entry) = self.label_entries.get(&inner_label_name) {
             let value = Assembler::calc_inst_offset(
@@ -305,27 +305,29 @@ impl Assembler {
             return Some((value, LabelType::InnerLabel));
         }
         // Local frame var
-        if let Some(&value) = scope_entry.frame_labels.get(target) {
-            return Some((value, LabelType::FrameVar));
+        if let Some(value) = frame.frame_labels.get(target) {
+            return Some((*value, LabelType::FrameVar));
         }
         None
     }
 
     pub fn relocate(&mut self) -> Vec<(usize, String)> {
         let mut unrelocated = Vec::<(usize, String)>::new();
-        let mut arg_updates = Vec::<(usize, i32)>::new();
+        let mut inst_updates = Vec::<(usize, i32)>::new();
         for (inst_loc, target) in self.reloc_tab.iter() {
-            match self.resolve_label(target, *inst_loc) {
+            match self.resolve_label(*inst_loc, target) {
                 Some((value, label_type)) => {
-                    self.resolved_labels.insert(target.clone(), (value, label_type));
-                    arg_updates.push((*inst_loc, value));
+                    self.resolved_labels.insert(
+                        (*inst_loc, target.clone()),
+                        (value, label_type));
+                    inst_updates.push((*inst_loc, value));
                 }
                 None => {
                     unrelocated.push((*inst_loc, target.clone()));
                 }
             }
         }
-        for (loc, arg) in arg_updates.into_iter() {
+        for (loc, arg) in inst_updates.into_iter() {
             self.instructions[loc].arg = arg;
         }
         unrelocated
@@ -379,7 +381,7 @@ impl DebugInfo for Assembler {
             None => return None,
             Some(l) => l.clone()
         };
-        let label_type = match self.resolved_labels.get(&label) {
+        let label_type = match self.resolved_labels.get(&(loc, label.clone())) {
             None => return None,
             Some((_, t)) => *t
         };
@@ -407,8 +409,9 @@ impl DebugInfo for Assembler {
         )
     }
 
-    fn value_for_label(&self, name: &str) -> Option<(i32, String)> {
-        self.resolved_labels.get(name)
+    fn value_for_label(&self, pc: i32, name: &str) -> Option<(i32, String)> {
+        let label_key = ((pc - SEG_CODE_START) as usize, name.to_string());
+        self.resolved_labels.get(&label_key)
             .map(|&(val, t)| (val, t.to_string()))
     }
 }
