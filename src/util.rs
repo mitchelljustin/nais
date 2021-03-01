@@ -1,8 +1,16 @@
+use std::ops::Range;
+use std::cmp;
+
 pub fn parse_hex(s: &str) -> Option<i32> {
     match i32::from_str_radix(s, 16) {
         Ok(val) => Some(val),
         Err(_) => None
     }
+}
+
+pub fn clamp<T: Ord + Copy>(range: &mut Range<T>, clamp: Range<T>) {
+    *range =
+        cmp::max(range.start, clamp.start)..cmp::min(range.end, clamp.end);
 }
 
 #[macro_export]

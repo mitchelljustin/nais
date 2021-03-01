@@ -5,6 +5,7 @@ use crate::machine::{MachineError, MachineStatus};
 use crate::machine::MachineStatus::Stopped;
 
 use super::Machine;
+use crate::constants::FP_ADDR;
 
 pub struct Op {
     pub name: &'static str,
@@ -39,44 +40,78 @@ impl Debug for Op {
     }
 }
 
-
-pub fn push(m: &mut Machine, x: i32) {
-    m.push(x);
+pub fn push(m: &mut Machine, val: i32) {
+    let sp = m.getsp();
+    m.setsp(sp + 1);
+    m.store(sp, val);
 }
 
-pub fn drop(m: &mut Machine, amt: i32) {
-    m.drop(amt);
+pub fn pop(m: &mut Machine) -> Option<i32> {
+    let newsp = m.getsp() - 1;
+    m.setsp(newsp);
+    m.load(newsp)
 }
 
 pub fn loadi(m: &mut Machine, addr: i32) {
+    let sp = m.getsp();
+    if addr >= sp {
+        m.set_error(MachineError::StackAccessOutOfBounds { sp, addr });
+    }
     if let Some(val) = m.load(addr) {
-        m.push(val);
+        push(m, val);
     }
 }
 
 pub fn storei(m: &mut Machine, addr: i32) {
-    if let Some(val) = m.pop() {
+    let sp = m.getsp();
+    if addr >= sp {
+        m.set_error(MachineError::StackAccessOutOfBounds { sp, addr });
+        return;
+    }
+    if let Some(val) = pop(m) {
         m.store(addr, val);
     }
 }
 
+pub fn addsp(m: &mut Machine, val: i32) {
+    let sp = m.getsp();
+    m.setsp(sp + val);
+}
 
-pub fn load(m: &mut Machine, extra_offset: i32) {
-    if let Some(addr) = m.pop() {
-        if let Some(val) = m.load(addr + extra_offset) {
-            m.push(val);
+pub fn load(m: &mut Machine, offset: i32) {
+    if let Some(addr) = pop(m) {
+        if let Some(val) = m.load(addr + offset) {
+            push(m, val);
         }
     }
 }
 
-pub fn store(m: &mut Machine, extra_offset: i32) {
-    if let (Some(addr), Some(val)) = (m.pop(), m.pop()) {
-        m.store(addr + extra_offset, val);
+pub fn store(m: &mut Machine, offset: i32) {
+    if let (Some(addr), Some(val)) = (pop(m), pop(m)) {
+        m.store(addr + offset, val);
+    }
+}
+
+fn getfp(m: &mut Machine) -> i32 {
+    m.load(FP_ADDR).expect("frame pointer invalid")
+}
+
+pub fn loadf(m: &mut Machine, offset: i32) {
+    let fp = getfp(m);
+    if let Some(val) = m.load(fp + offset) {
+        push(m, val);
+    }
+}
+
+pub fn storef(m: &mut Machine, offset: i32) {
+    let fp = getfp(m);
+    if let Some(val) = pop(m) {
+        m.store(fp + offset, val);
     }
 }
 
 pub fn print(m: &mut Machine, _: i32) {
-    if let Some(x) = m.pop() {
+    if let Some(x) = pop(m) {
         m.print(x);
     }
 }
@@ -94,7 +129,7 @@ pub fn ecall(m: &mut Machine, callcode: i32) {
 
     match call_name {
         "exit" => {
-            match m.pop() {
+            match pop(m) {
                 Some(0) =>
                     m.set_status(Stopped),
                 Some(status) =>
@@ -110,24 +145,21 @@ pub fn ebreak(m: &mut Machine, _: i32) {
     m.breakpoint();
 }
 
-pub fn jal(m: &mut Machine, offset: i32) {
+pub fn jump(m: &mut Machine, offset: i32) {
     let pc = m.getpc();
-    m.push(pc);
-    m.jump(offset);
+    m.setpc(pc + offset);
 }
 
-pub fn jump(m: &mut Machine, offset: i32) {
-    m.jump(offset);
+pub fn jal(m: &mut Machine, offset: i32) {
+    let pc = m.getpc();
+    push(m, pc);
+    m.setpc(pc + offset);
 }
 
 pub fn ret(m: &mut Machine, _: i32) {
-    if let Some(addr) = m.pop() {
+    if let Some(addr) = pop(m) {
         m.setpc(addr);
     }
-}
-
-pub fn extend(m: &mut Machine, amt: i32) {
-    m.extend(amt);
 }
 
 pub fn invald(m: &mut Machine, _: i32) {
@@ -144,10 +176,10 @@ macro_rules! binary_op_funcs {
     ( $($name:ident ($operator:tt));+; ) => {
         $(
             pub fn $name(m: &mut Machine, imm: i32) {
-                if let (Some(top), Some(sec)) = (m.pop(), m.pop()) {
+                if let (Some(top), Some(sec)) = (pop(m), pop(m)) {
                     let mut res = with_overflow!(top $operator sec);
                     res = with_overflow!(res $operator imm);
-                    m.push(res);
+                    push(m, res);
                 }
             }
         )+
@@ -169,8 +201,8 @@ macro_rules! binary_op_imm_funcs {
     ( $($name:ident ($operator:tt));+; ) => {
         $(
             pub fn $name(m: &mut Machine, imm: i32) {
-                if let Some(top) = m.pop() {
-                    m.push(with_overflow!(top $operator imm));
+                if let Some(top) = pop(m) {
+                    push(m, with_overflow!(top $operator imm));
                 }
             }
         )+
@@ -192,9 +224,9 @@ macro_rules! branch_cmp_funcs {
         ( $($name:ident ($cmp:tt));+; ) => {
             $(
                 pub fn $name(m: &mut Machine, offset: i32) {
-                    if let (Some(top), Some(sec)) = (m.pop(), m.pop()) {
+                    if let (Some(top), Some(sec)) = (pop(m), pop(m)) {
                         if sec $cmp top {
-                            m.jump(offset);
+                            jump(m, offset);
                         }
                     }
                 }
@@ -210,9 +242,9 @@ branch_cmp_funcs! {
 }
 
 pub fn sar(m: &mut Machine, shamt: i32) {
-    if let Some(top) = m.pop() {
+    if let Some(top) = pop(m) {
         let top = top >> shamt;
-        m.push(top);
+        push(m, top);
     }
 }
 
@@ -220,11 +252,11 @@ macro_rules! logical_shift_funcs {
         ( $($name:ident ($shop:tt));+; ) => {
             $(
                 pub fn $name(m: &mut Machine, shamt: i32) {
-                    if let Some(top) = m.pop() {
+                    if let Some(top) = pop(m) {
                         let top = top as u32;
                         let top = (top $shop shamt);
                         let top = top as i32;
-                        m.push(top);
+                        push(m, top);
                     }
                 }
             )+
@@ -251,12 +283,12 @@ macro_rules! register_ops {
 
 register_ops!(
     invald
-    push extend drop
+    push addsp
     add sub mul div rem and or xor
     addi subi muli divi remi andi ori xori
     sar shl shr
     beq bne blt bge
-    load store loadi storei
+    load store loadi storei loadf storef
     jump jal ret
     ecall ebreak
     print

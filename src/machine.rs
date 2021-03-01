@@ -1,4 +1,4 @@
-use std::{cmp, fmt, io};
+use std::{fmt, io};
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter, Write as FmtWrite};
 use std::io::Write;
@@ -14,8 +14,7 @@ use crate::util;
 pub struct CallFrame {
     pub name: String,
     pub start_addr: i32,
-    pub args: HashMap<String, i32>,
-    pub locals: HashMap<String, i32>,
+    pub var_names: HashMap<i32, String>,
 }
 
 pub trait DebugInfo {
@@ -27,12 +26,11 @@ pub trait DebugInfo {
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum MachineError {
     IllegalStackPop,
-    StackOverflow,
-    PCSegFault,
+    PCSegFault { newpc: i32 },
     InvalidInstruction,
     CannotDecodeInst(i32),
-    StackIndexOutOfBounds,
-    StackSegFault,
+    StackAccessOutOfBounds { sp: i32, addr: i32 },
+    StackSegFault { addr: i32 },
     ProgramExit(i32),
     NoSuchEnvCall(i32),
     MaxCyclesReached,
@@ -42,6 +40,7 @@ pub enum MachineError {
 pub enum MachineStatus {
     Idle,
     Running,
+    Debugging,
     Stopped,
     Error(MachineError),
 }
@@ -53,110 +52,26 @@ pub struct Machine<'a> {
     ncycles: usize,
     encoder: Encoder,
     debug_info: Option<&'a dyn DebugInfo>,
+
     pub verbose: bool,
     pub max_cycles: usize,
+    pub enable_debugger: bool,
 }
-
-impl Debug for Machine<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Machine")
-            .field("status", &self.status)
-            .field("ncycles", &self.ncycles)
-            .finish()
-    }
-}
-
 
 impl<'a> Machine<'a> {
-    pub fn new() -> Machine<'a> {
-        let mut mem_stack = vec![0; SEG_LEN as usize];
-        for (i, x) in INIT_STACK.iter().enumerate() {
-            mem_stack[i] = *x;
-        }
-        Machine {
-            mem_stack,
-            mem_code: vec![0; SEG_LEN as usize],
-            status: Idle,
-            ncycles: 0,
-            encoder: Encoder::new(),
-            debug_info: None,
-            verbose: false,
-            max_cycles: MAX_CYCLES,
-        }
-    }
-
-    pub fn copy_code(&mut self, code: &[i32]) {
-        for (i, inst) in code.iter().enumerate() {
-            self.mem_code[i] = *inst;
-        }
-    }
-
-    pub fn attach_debug_info(&mut self, debug_info: &'a dyn DebugInfo) {
-        self.debug_info = Some(debug_info);
-    }
-
-    pub fn run(&mut self) {
-        self.set_status(Running);
-        while self.status == Running {
-            self.cycle();
-        }
-        if self.status != Stopped {
-            println!("{:?}", self);
-            self.breakpoint();
-        }
-    }
-
-    pub fn set_status(&mut self, status: MachineStatus) {
-        self.status = status;
-    }
-
-    pub fn setpc(&mut self, addr: i32) {
-        if addr < SEG_CODE_START || addr >= SEG_CODE_END {
-            self.status = Error(PCSegFault);
-            return;
-        }
-        self.mem_stack[PC_ADDR as usize] = addr;
-    }
-
-    pub fn getpc(&self) -> i32 {
+    pub(crate) fn getpc(&self) -> i32 {
         self.mem_stack[PC_ADDR as usize]
     }
 
-    fn getsp(&self) -> i32 {
-        return self.mem_stack[SP_ADDR as usize];
+    pub(crate) fn getsp(&self) -> i32 {
+        self.mem_stack[SP_ADDR as usize]
     }
 
-    fn setsp(&mut self, sp: i32) {
-        self.mem_stack[SP_ADDR as usize] = sp;
-    }
-
-    pub fn pop(&mut self) -> Option<i32> {
-        let sp = self.getsp();
-        if sp <= SP_MINIMUM {
-            self.set_status(Error(IllegalStackPop));
-            return None;
+    fn check_stack_addr(&self, addr: i32) -> Option<MachineError> {
+        if addr < SEG_STACK_START || addr >= SEG_STACK_END {
+            return Some(StackSegFault { addr });
         }
-        let sp = sp - 1;
-        self.setsp(sp);
-        Some(self.mem_stack[sp as usize])
-    }
-
-    pub fn push(&mut self, val: i32) {
-        let sp = self.getsp();
-        if sp >= SEG_STACK_END {
-            self.set_status(Error(StackOverflow));
-            return;
-        }
-        self.mem_stack[sp as usize] = val;
-        self.setsp(sp + 1);
-    }
-
-    pub fn extend(&mut self, amt: i32) {
-        self.mem_stack[SP_ADDR as usize] += amt;
-    }
-
-    pub fn drop(&mut self, amt: i32) {
-        self.mem_stack[SP_ADDR as usize] -= amt;
+        None
     }
 
     fn stack_ref_mut(&mut self, addr: i32) -> Option<&mut i32> {
@@ -168,19 +83,33 @@ impl<'a> Machine<'a> {
         Some(&mut self.mem_stack[addr as usize])
     }
 
-    fn check_stack_addr(&self, addr: i32) -> Option<MachineError> {
-        if addr < SEG_STACK_START || addr >= SEG_STACK_END {
-            return Some(StackSegFault);
+    pub fn store(&mut self, addr: i32, val: i32) {
+        if let Some(ptr) = self.stack_ref_mut(addr) {
+            *ptr = val;
         }
-        if addr >= self.getsp() {
-            return Some(StackIndexOutOfBounds);
-        }
-        None
     }
 
-    pub fn jump(&mut self, offset: i32) {
-        let pc = self.getpc();
-        self.setpc(pc + offset);
+    pub fn load(&mut self, addr: i32) -> Option<i32> {
+        match self.stack_ref_mut(addr) {
+            None => None,
+            Some(ptr) => Some(*ptr),
+        }
+    }
+
+    pub fn setpc(&mut self, newpc: i32) {
+        if newpc < SEG_CODE_START || newpc >= SEG_CODE_END {
+            self.set_error(PCSegFault { newpc });
+            return;
+        }
+        self.store(PC_ADDR, newpc);
+    }
+
+    pub fn setsp(&mut self, newsp: i32) {
+        if newsp <= SP_MINIMUM {
+            self.set_error(IllegalStackPop);
+            return;
+        }
+        self.store(SP_ADDR, newsp);
     }
 
     pub fn print(&mut self, val: i32) {
@@ -191,28 +120,18 @@ impl<'a> Machine<'a> {
         }
     }
 
-    pub fn store(&mut self, addr: i32, val: i32) {
-        if let Some(r) = self.stack_ref_mut(addr) {
-            *r = val;
-        }
-    }
-
-    pub fn load(&mut self, addr: i32) -> Option<i32> {
-        match self.stack_ref_mut(addr) {
-            None => None,
-            Some(r) => Some(*r),
-        }
-    }
-
     pub fn breakpoint(&mut self) {
-        println!("\nBREAKPOINT");
-        self.jump(1);
-        println!("{}", self.code_dump_around_pc(-4..5));
-        self.run_debugger();
+        println!("{}", match self.status {
+            Error(_) =>
+                "ERROR BREAKPOINT",
+            _ =>
+                "USER BREAKPOINT",
+        });
+        self.set_status(Debugging);
     }
 
-    fn run_debugger(&mut self) {
-        let mut next_counter = 0;
+    fn debug_cycle(&mut self) {
+        println!("{}", self.code_dump_around_pc(-4..5));
         loop {
             print!("debug% ");
             io::stdout().flush().unwrap();
@@ -234,23 +153,36 @@ impl<'a> Machine<'a> {
             let command = parts[0];
             match command {
                 "c" | "continue" => {
+                    self.set_status(Running);
                     return;
-                },
+                }
                 "n" | "next" => {
-                    let pc = self.getpc();
-                    self.cycle();
-                    if self.getpc() == pc + 1 {
-                        next_counter += 1;
-                    } else {
-                        next_counter = 0;
-                    }
-                    println!("{}", self.code_dump_around_pc((-4 - next_counter)..5));
+                    return;
                 }
                 "pc" | "code" => {
+                    match int_args[..] {
+                        [mid, len] =>
+                            println!("{}", self.code_dump_around(mid, -len..len + 1)),
+                        [mid] =>
+                            println!("{}", self.code_dump_around(mid, -4..5)),
+                        [] =>
+                            println!("{}", self.code_dump_around_pc(-4..5)),
+                        _ =>
+                            println!("format: pc addr [range]"),
+                    }
                     println!("{}", self.code_dump_around_pc(code_range(0)));
                 }
                 "ps" | "stack" => {
-                    println!("{}", self.stack_dump());
+                    match int_args[..] {
+                        [mid, len] =>
+                            println!("{}", self.stack_mem_dump((mid - len)..(mid + len + 1))),
+                        [mid] =>
+                            println!("{}", self.stack_mem_dump((mid - 4)..(mid + 4))),
+                        [] =>
+                            println!("{}", self.stack_dump()),
+                        _ =>
+                            println!("format: ps addr [range]"),
+                    }
                 }
                 "pm" | "machine" => {
                     println!("{:?}", self);
@@ -260,17 +192,6 @@ impl<'a> Machine<'a> {
                         self.store(addr, val);
                     } else {
                         println!("format: s|store addr val");
-                    }
-                }
-                "l" | "load" => {
-                    if let [addr] = int_args[..] {
-                        if let Some(dump) = self.stack_addr_dump(addr) {
-                            println!("{}", dump);
-                        } else {
-                            println!("Invalid address")
-                        }
-                    } else {
-                        println!("format: l|load addr");
                     }
                 }
                 "lc" | "loadcode" => {
@@ -297,25 +218,27 @@ impl<'a> Machine<'a> {
     }
 
     pub fn code_dump_around(&self, middle: i32, drange: Range<i32>) -> String {
-        let lo = cmp::max(SEG_CODE_START, middle + drange.start);
-        let hi = cmp::min(SEG_CODE_END, middle + drange.end);
-        self.code_dump(middle, lo..hi)
+        let mut range = (middle + drange.start)..(middle + drange.end);
+        util::clamp(&mut range, SEG_CODE_START..SEG_CODE_END);
+        self.code_dump(middle, range)
     }
 
-    pub fn code_dump(&self, highlight: i32, range: Range<i32>) -> String {
+    pub fn code_dump(&self, highlight: i32, addr_range: Range<i32>) -> String {
         let mut out = String::new();
-        let mut cur_frame = match self.call_frame_for_inst(range.start) {
-            None => None,
-            Some(frame) => {
+        let mut cur_frame = match self.debug_info
+            .map(|d| d.call_frame_for_inst(addr_range.start)) {
+            Some(Some(frame)) => {
                 writeln!(out, ".. {}:", frame.name).unwrap();
-                Some(frame)
+                frame.name
             }
+            _ => "".to_string(),
         };
-        for addr in range {
-            if let Some(frame) = self.call_frame_for_inst(addr) {
-                if frame.name != cur_frame.as_ref().unwrap().name {
-                    writeln!(out, "{}:", frame.name).unwrap();
-                    cur_frame = Some(frame);
+        for addr in addr_range {
+            let maybe_frame = self.debug_info.map(|d| d.call_frame_for_inst(addr));
+            if let Some(Some(frame)) = maybe_frame {
+                if frame.name != cur_frame {
+                    cur_frame = frame.name;
+                    writeln!(out, "{}:", cur_frame).unwrap();
                 }
             }
             out.write_str("    ").unwrap();
@@ -326,10 +249,11 @@ impl<'a> Machine<'a> {
                     continue;
                 }
             };
-            if let Some((lab, lab_type)) = self.resolved_label_for_inst(addr) {
-                write!(out, " {:8} ({})", lab, lab_type).unwrap();
+            let maybe_label = self.debug_info.map(|d| d.resolved_label_for_inst(addr));
+            if let Some(Some((lab, lab_type))) = maybe_label {
+                write!(out, " {:10} ({})", lab, lab_type).unwrap();
             } else {
-                out.write_str(&" ".repeat(13)).unwrap();
+                out.write_str(&" ".repeat(15)).unwrap();
             }
             if addr == highlight {
                 out.write_str(" <========").unwrap()
@@ -340,15 +264,38 @@ impl<'a> Machine<'a> {
     }
 
     pub fn stack_dump(&self) -> String {
-        let fp = self.mem_stack[FP_ADDR as usize] as usize;
-        (0..self.getsp())
+        self.stack_mem_dump(0..self.getsp())
+    }
+
+    pub fn stack_mem_dump(&self, mut addr_range: Range<i32>) -> String {
+        util::clamp(&mut addr_range, SEG_STACK_START..SEG_STACK_END);
+        let fp = self.mem_stack[FP_ADDR as usize];
+        let var_names = match self.debug_info
+            .map(|d| d.call_frame_for_inst(self.getpc())) {
+            Some(Some(frame)) => frame.var_names,
+            _ => HashMap::new()
+        };
+        let extra_frame_info = |addr: i32| {
+            let mut out = String::new();
+            let offset_from_fp = addr - fp;
+            match offset_from_fp {
+                -1 => out.write_str("saved fp").unwrap(),
+                -2 => out.write_str("retaddr").unwrap(),
+                _ => {
+                    if let Some(var_name) = var_names.get(&offset_from_fp) {
+                        write!(out, "{} ", var_name).unwrap();
+                    }
+                }
+            }
+            if addr == fp {
+                out.write_str("<======== FP").unwrap();
+            }
+            out
+        };
+        addr_range
             .filter_map(|addr| self.stack_addr_dump(addr))
             .enumerate()
-            .map(|(addr, s)| if addr == fp {
-                s + "<======== FP"
-            } else {
-                s
-            })
+            .map(|(addr, s)| s + &extra_frame_info(addr as i32))
             .collect::<Vec<_>>()
             .join("\n")
     }
@@ -369,6 +316,61 @@ impl<'a> Machine<'a> {
         Some(ret)
     }
 
+    pub fn new() -> Machine<'a> {
+        let mut mem_stack = vec![0; SEG_LEN as usize];
+        for (i, x) in INIT_STACK.iter().enumerate() {
+            mem_stack[i] = *x;
+        }
+        Machine {
+            mem_stack,
+            mem_code: vec![0; SEG_LEN as usize],
+            status: Idle,
+            ncycles: 0,
+            encoder: Encoder::new(),
+            debug_info: None,
+            verbose: false,
+            enable_debugger: true,
+            max_cycles: MAX_CYCLES,
+        }
+    }
+
+    pub fn copy_code(&mut self, code: &[i32]) {
+        for (i, inst) in code.iter().enumerate() {
+            self.mem_code[i] = *inst;
+        }
+    }
+
+    pub fn attach_debug_info(&mut self, debug_info: &'a dyn DebugInfo) {
+        self.debug_info = Some(debug_info);
+    }
+
+    pub fn set_status(&mut self, status: MachineStatus) {
+        self.status = status;
+    }
+
+    pub fn set_error(&mut self, error: MachineError) {
+        self.set_status(Error(error))
+    }
+
+    pub fn is_running(&self) -> bool {
+        match self.status {
+            Running | Debugging => true,
+            _ => false,
+        }
+    }
+
+    pub fn run(&mut self) {
+        self.set_status(Running);
+        while self.is_running() {
+            self.cycle();
+        }
+        if self.status != Stopped && self.enable_debugger {
+            println!("{:?}", self);
+            self.breakpoint();
+            self.debug_cycle();
+        }
+    }
+
     pub fn cycle(&mut self) {
         let pc = self.getpc();
         let inst = match self.inst_at_addr(pc) {
@@ -382,17 +384,17 @@ impl<'a> Machine<'a> {
             println!("{:<4} {}", self.ncycles, inst);
         }
         (inst.op.f)(self, inst.arg);
-        self.jump(1);
+        self.setpc(self.getpc() + 1);
         self.ncycles += 1;
+        if self.status == Debugging {
+            self.debug_cycle();
+        }
         if self.ncycles == self.max_cycles {
             self.set_status(Error(MaxCyclesReached));
         }
     }
 
     fn inst_at_addr(&self, addr: i32) -> Result<Inst, MachineError> {
-        if addr < SEG_CODE_START || addr >= SEG_CODE_END {
-            return Err(PCSegFault);
-        }
         let inst_addr = (addr - SEG_CODE_START) as usize;
         let bin_inst = self.mem_code[inst_addr];
         match self.encoder.decode(bin_inst) {
@@ -405,25 +407,11 @@ impl<'a> Machine<'a> {
     }
 }
 
-impl DebugInfo for Machine<'_> {
-    fn resolved_label_for_inst(&self, addr: i32) -> Option<(String, String)> {
-        match self.debug_info {
-            None => None,
-            Some(info) => info.resolved_label_for_inst(addr)
-        }
-    }
-
-    fn call_frame_for_inst(&self, addr: i32) -> Option<CallFrame> {
-        match self.debug_info {
-            None => None,
-            Some(info) => info.call_frame_for_inst(addr)
-        }
-    }
-
-    fn value_for_label(&self, name: &str) -> Option<(i32, String)> {
-        match self.debug_info {
-            None => None,
-            Some(info) => info.value_for_label(name)
-        }
+impl Debug for Machine<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Machine")
+            .field("status", &self.status)
+            .field("ncycles", &self.ncycles)
+            .finish()
     }
 }

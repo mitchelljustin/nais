@@ -15,7 +15,6 @@ mod util;
 
 fn array_on_stack() -> Assembler {
     program_from_asm! {
-        local index;
         array state 10;
             start_frame;
 
@@ -23,59 +22,59 @@ fn array_on_stack() -> Assembler {
             loadi fp;
             addi state;
             jal fill_array;
-            drop 2;
+            addsp -2;
 
             push state_len;
             loadi fp;
             addi state;
             jal print_array;
-            drop 2;
+            addsp -2;
 
             end_frame;
             push 0;
             ecall exit;
 
         label fill_array;
-        arg array len;
-        local index x;
+        arg array array_len;
+        local index val;
             start_frame;
 
             push 0;
             storef index;
 
-            push 6;
-            storef x;
+            push 0;
+            storef val;
 
         inner loop;
-            loadf x;
-            jal mangle;
-            storef x;
+            loadf val;
+            addi 1;
+            storef val;
 
-            loadf x;
+            loadf val;
             loadf array;
             loadf index;
             add; // &arr[index]
-            store; // arr[index] = x
+            store; // arr[index] = val
 
             loadf index;
             addi 1;
+            // jal increment;
             storef index; // index += 1
 
             loadf index;
-            loadf len;
+            loadf array_len;
             blt loop; // if index < len goto loop
 
             end_frame;
             ret;
 
-        label mangle;
-        arg x;
+        label increment;
+        arg val;
             start_frame;
-            ebreak;
 
-            loadf x;
-            addi 78;
-            storef x;
+            loadf val;
+            addi 1;
+            storef val;
 
             end_frame;
             ret;
@@ -118,20 +117,20 @@ fn test_debugger() -> Assembler {
 
         push 0;
         jal nolocals;
-        drop 1;
+        addsp -1;
 
         end_frame;
         push 0;
         ecall exit;
 
     label nolocals;
-        arg x;
+        arg val;
 
         start_frame;
 
-        loadf x;
+        loadf val;
         addi 1;
-        storef x;
+        storef val;
 
         end_frame;
         ret;
@@ -165,7 +164,9 @@ fn main() {
     let mut machine = Machine::new();
     machine.attach_debug_info(&program);
     machine.verbose = false;
+    machine.enable_debugger = true;
     machine.max_cycles = 1_000_000_000;
     machine.copy_code(&binary);
     machine.run();
+    println!("{:?}", machine);
 }

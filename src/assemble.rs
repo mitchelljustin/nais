@@ -38,14 +38,6 @@ macro_rules! parse_asm_line {
     ( $p:ident start_frame ) => {
          $p.start_frame();
     };
-    ( $p:ident loadf $name:ident ) => {
-        parse_asm_line!($p loadi fp );
-        parse_asm_line!($p load $name );
-    };
-    ( $p:ident storef $name:ident ) => {
-        parse_asm_line!($p loadi fp );
-        parse_asm_line!($p store $name );
-    };
     ( $p:ident end_frame ) => {
          $p.end_frame();
     };
@@ -268,14 +260,14 @@ impl Assembler {
         self.add_placeholder_inst("storei", "fp");
         let extend_sz = self.cur_frame().locals_size;
         if extend_sz > 0 {
-            self.add_inst("extend", extend_sz);
+            self.add_inst("addsp", extend_sz);
         }
     }
 
     pub fn end_frame(&mut self) {
         let drop_sz = self.cur_frame().locals_size;
         if drop_sz > 0 {
-            self.add_inst("drop", drop_sz);
+            self.add_inst("addsp", -drop_sz);
         }
         self.add_placeholder_inst("storei", "fp");
     }
@@ -403,15 +395,14 @@ impl DebugInfo for Assembler {
             frame_labels,
             ..
         } = unwrap_or_return!(self.label_entries.get(name).cloned());
-        let (locals, args) = frame_labels.into_iter().partition(
-            |&(_, offset)| offset >= 0
-        );
+        let var_names: HashMap<i32, String> = frame_labels.into_iter()
+            .map(|(name, off)| (off, format!("{}{:10}", if off < 0 { "a:" } else { "" }, name)))
+            .collect();
         Some(
             CallFrame {
                 name,
                 start_addr,
-                locals,
-                args,
+                var_names,
             }
         )
     }
