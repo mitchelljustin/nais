@@ -8,70 +8,70 @@ use crate::constants::{FP_ADDR, PC_ADDR, SEG_CODE_START, SP_ADDR};
 use crate::isa::{Encoder, Inst, OP_INVALID};
 use crate::isa;
 
-macro_rules! parse_asm_line {
-    ( $p:ident label $label:ident ) => {
-        $p.add_top_level_label(stringify!($label));
+macro_rules! add_asm_line {
+    ( [$target:ident] label $label:ident ) => {
+        $target.add_top_level_label(stringify!($label));
     };
-    ( $p:ident inner $label:ident ) => {
-        $p.add_inner_label(stringify!($label));
+    ( [$target:ident] inner $label:ident ) => {
+        $target.add_inner_label(stringify!($label));
     };
-    ( $p:ident global $name:ident $loc:literal ) => {
-        $p.add_global_var(stringify!($name), $loc);
+    ( [$target:ident] global $name:ident $loc:literal ) => {
+        $target.add_global_var(stringify!($name), $loc);
     };
-    ( $p:ident const $name:ident $value:literal ) => {
-        $p.add_constant(stringify!($name), $value);
+    ( [$target:ident] const $name:ident $value:literal ) => {
+        $target.add_constant(stringify!($name), $value);
     };
-    ( $p:ident arg $($name:ident)+ ) => {
+    ( [$target:ident] arg $($name:ident)+ ) => {
         $(
-            $p.add_arg_var(stringify!($name), 1);
+            $target.add_arg_var(stringify!($name));
         )+
     };
-    ( $p:ident local $($name:ident)+ ) => {
+    ( [$target:ident] local $($name:ident)+ ) => {
         $(
-            $p.add_local_var(stringify!($name), 1);
+            $target.add_local_var(stringify!($name), 1);
         )+
     };
-    ( $p:ident array $name:ident $size:literal ) => {
-        $p.add_local_var(stringify!($name), $size);
+    ( [$target:ident] array $name:ident $size:literal ) => {
+        $target.add_local_var(stringify!($name), $size);
     };
-    ( $p:ident start_frame ) => {
-         $p.start_frame();
+    ( [$target:ident] start_frame ) => {
+        $target.start_frame();
     };
-    ( $p:ident end_frame ) => {
-         $p.end_frame();
+    ( [$target:ident] end_frame ) => {
+        $target.end_frame();
     };
-    ( $p:ident $mnem:ident $label:ident ) => {
-        $p.add_placeholder_inst(stringify!($mnem), stringify!($label));
+    ( [$target:ident] $mnem:ident $label:ident ) => {
+        $target.add_placeholder_inst(stringify!($mnem), stringify!($label));
     };
-    ( $p:ident $mnem:ident ) => {
-        parse_asm_line!($p $mnem 0);
+    ( [$target:ident] $mnem:ident ) => {
+        add_asm_line!([$target] $mnem 0);
     };
-    ( $p:ident $mnem:ident $arg:literal ) => {
-        $p.add_inst(stringify!($mnem), $arg);
+    ( [$target:ident] $mnem:ident $arg:literal ) => {
+        $target.add_inst(stringify!($mnem), $arg);
     };
 }
 
 macro_rules! add_asm {
- ( [program: $p:ident] $( $mnem:ident $($label:ident)* $($a:literal)* );+; ) => {
+ ( [$target:ident] $( $mnem:ident $($label:ident)* $($a:literal)* );+; ) => {
        $(
-            parse_asm_line!($p $mnem $($label)* $($a)*);
+            add_asm_line!([$target] $mnem $($label)* $($a)*);
        )+
     };
 }
 
-macro_rules! program_from_asm {
+macro_rules! inline_assembler {
     ( $( $mnem:ident $($label:ident)* $($a:literal)* );+; ) => {
        {
-           let mut p = Assembler::new();
-           p.init();
+           let mut assem = Assembler::new();
+           assem.init();
            add_asm! {
-               [program: p]
-               $(
+                [assem]
+                $(
                     $mnem $($label)* $($a)*;
-               )+
+                )+
            }
-           p.finish();
-           p
+           assem.finish();
+           assem
        }
     };
 }
@@ -122,11 +122,11 @@ pub struct ResolvedLabel {
 impl Display for LabelType {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            LabelType::Constant => "C",
-            LabelType::GlobalVar => "G",
-            LabelType::TopLevel => "T",
-            LabelType::InnerLabel => "I",
-            LabelType::FrameVar => "F",
+            LabelType::Constant =>      "const",
+            LabelType::GlobalVar =>     "glob",
+            LabelType::TopLevel =>      "sub",
+            LabelType::InnerLabel =>    "inner",
+            LabelType::FrameVar =>      "var",
         })
     }
 }
@@ -283,7 +283,7 @@ impl Assembler {
     pub fn add_local_var(&mut self, name: &str, sz: i32) {
         let frame = self.cur_frame();
         frame.frame_vars.insert(
-            String::from(name),
+            name.to_string(),
             frame.locals_size,
         );
         frame.locals_size += sz;
@@ -295,13 +295,13 @@ impl Assembler {
         }
     }
 
-    pub fn add_arg_var(&mut self, name: &str, sz: i32) {
+    pub fn add_arg_var(&mut self, name: &str) {
         let frame = self.cur_frame();
         frame.frame_vars.insert(
-            String::from(name),
+            name.to_string(),
             -frame.args_size - 3, // [..args retaddr savedfp || locals ]
         );
-        frame.args_size += sz;
+        frame.args_size += 1;
     }
 
     pub fn add_constant(&mut self, name: &str, value: i32) {
@@ -434,11 +434,10 @@ impl Assembler {
         if !errors.is_empty() {
             return Err(errors);
         }
-        Ok(
-            self.instructions.iter()
-                .map(|inst| self.encoder.encode(inst))
-                .collect()
-        )
+        let bin = self.instructions.iter()
+            .map(|inst| self.encoder.encode(inst))
+            .collect();
+        Ok(bin)
     }
 
     fn calc_inst_offset(target_addr: i32, inst_addr: i32) -> i32 {

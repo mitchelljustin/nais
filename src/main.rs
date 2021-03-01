@@ -14,8 +14,8 @@ mod constants;
 mod util;
 
 fn array_on_stack() -> Assembler {
-    program_from_asm! {
-        label _entry;
+    inline_assembler! {
+        label main;
         array state 10;
             start_frame;
 
@@ -48,18 +48,18 @@ fn array_on_stack() -> Assembler {
 
         inner loop;
             loadf val;
-            addi 1;
-            storef val;
-
-            loadf val;
             loadf array;
             loadf index;
-            add; // &arr[index]
-            store; // arr[index] = val
+            add;
+            store;
+
+            loadf val;
+            jal increment;
+            storef val;
 
             loadf index;
-            jal increment;
-            storef index; // index += 1
+            addi 1;
+            storef index;
 
             loadf index;
             loadf array_len;
@@ -72,8 +72,6 @@ fn array_on_stack() -> Assembler {
         arg val;
             start_frame;
 
-            ebreak;
-
             loadf val;
             addi 1;
             storef val;
@@ -85,15 +83,12 @@ fn array_on_stack() -> Assembler {
         arg array array_len;
         local index;
             start_frame;
+            ebreak;
 
             push 0;
             storef index;
 
         inner print_loop;
-            loadf index;
-            print;
-
-            // array[index]
             loadf index;
             loadf array;
             add;
@@ -114,7 +109,7 @@ fn array_on_stack() -> Assembler {
 }
 
 fn test_debugger() -> Assembler {
-    program_from_asm! {
+    inline_assembler! {
         start_frame;
 
         push 0;
@@ -150,9 +145,9 @@ fn program_with_name(name: &str) -> Assembler {
 fn main() {
     let args: Vec<String> = env::args().collect();
     let which = args.get(1).cloned().unwrap_or("".to_string());
-    let mut program = program_with_name(&which);
+    let mut assembler = program_with_name(&which);
     let binary = {
-        match program.assemble() {
+        match assembler.assemble() {
             Err(errors) => {
                 panic!("assembly errors: \n{}\n", errors
                     .iter()
@@ -164,10 +159,11 @@ fn main() {
         }
     };
     let mut machine = Machine::new();
-    machine.attach_debug_info(DebugInfo::from(program));
-    machine.verbose = false;
-    machine.enable_debugger = true;
     machine.max_cycles = 1_000_000_000;
+
+    machine.enable_debugger = true;
+    machine.attach_debug_info(DebugInfo::from(assembler));
+
     machine.copy_code(&binary);
     machine.run();
     println!("{:?}", machine);

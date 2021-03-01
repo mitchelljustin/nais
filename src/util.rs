@@ -8,7 +8,7 @@ pub fn parse_hex(s: &str) -> Option<i32> {
     }
 }
 
-pub fn clamp<T: Ord + Copy>(range: &mut Range<T>, clamp: Range<T>) {
+pub fn clamp_range<T: Ord + Copy>(range: &mut Range<T>, clamp: Range<T>) {
     *range =
         cmp::max(range.start, clamp.start)..cmp::min(range.end, clamp.end);
 }
