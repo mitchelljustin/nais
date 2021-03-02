@@ -400,7 +400,7 @@ impl Display for Assembler {
         f.write_str(&self.instructions
             .iter()
             .map(|inst| inst.to_string())
-            .collect::<Vec<String>>()
+            .collect::<Vec<_>>()
             .join("\n")
         )
     }

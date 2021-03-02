@@ -79,7 +79,7 @@ pub mod env_call {
 
     use super::*;
 
-    fn exit(m: &mut Machine) {
+    fn exit(m: &mut Machine) -> i32 {
         match pop(m) {
             Some(0) =>
                 m.set_status(Stopped),
@@ -87,9 +87,10 @@ pub mod env_call {
                 m.set_status(MachineStatus::Error(MachineError::ProgramExit(status))),
             None => {}
         };
+        0
     }
 
-    fn write(m: &mut Machine) {
+    fn write(m: &mut Machine) -> i32 {
         if let (Some(fd), Some(buf), Some(buf_len)) = (pop(m), pop(m), pop(m)) {
             match fd {
                 1 => {
@@ -100,23 +101,29 @@ pub mod env_call {
                         .collect();
                     if data.len() != buf_len as usize {
                         m.set_error(EnvCallErr("error reading memory".to_string()));
-                        return;
+                        return 1;
                     }
                     match io::stdout().write(&data) {
-                        Err(err) => m.set_error(EnvCallErr(format!("IO error: {}", err))),
-                        Ok(_) => {}
+                        Err(err) => {
+                            m.set_error(EnvCallErr(format!("IO error: {}", err)));
+                            1
+                        },
+                        Ok(_) => 0,
                     }
                 }
                 _ => {
-                    m.set_error(EnvCallErr(format!("cannot write to fd: {}", fd)))
+                    m.set_error(EnvCallErr(format!("cannot write to fd: {}", fd)));
+                    1
                 }
             }
+        } else {
+            1
         }
     }
 
     macro_rules! def_env_call_list {
         ( $($name:ident)+ ) => {
-            pub const LIST: &[(fn(&mut Machine), &'static str)] = &[
+            pub const LIST: &[(fn(&mut Machine) -> i32, &'static str)] = &[
                 $(
                     ($name, stringify!($name)),
                 )+
@@ -136,7 +143,8 @@ pub fn ecall(m: &mut Machine, callcode: i32) {
         return;
     }
     let (env_call_func, _) = env_call::LIST[callcode as usize];
-    env_call_func(m);
+    let retval = env_call_func(m);
+    push(m, retval);
 }
 
 pub fn ebreak(m: &mut Machine, _: i32) {
@@ -173,6 +181,7 @@ macro_rules! with_overflow {
 macro_rules! binary_op_funcs {
     ( $($name:ident ($operator:tt));+; ) => {
         $(
+            #[allow(unused)]
             pub fn $name(m: &mut Machine, imm: i32) {
                 if let (Some(top), Some(sec)) = (pop(m), pop(m)) {
                     let mut res = with_overflow!(top $operator sec);
@@ -198,6 +207,7 @@ binary_op_funcs! {
 macro_rules! binary_op_imm_funcs {
     ( $($name:ident ($operator:tt));+; ) => {
         $(
+            #[allow(unused)]
             pub fn $name(m: &mut Machine, imm: i32) {
                 if let Some(top) = pop(m) {
                     push(m, with_overflow!(top $operator imm));
@@ -221,6 +231,7 @@ binary_op_imm_funcs! {
 macro_rules! branch_cmp_funcs {
         ( $($name:ident ($cmp:tt));+; ) => {
             $(
+                #[allow(unused)]
                 pub fn $name(m: &mut Machine, offset: i32) {
                     if let (Some(top), Some(sec)) = (pop(m), pop(m)) {
                         if sec $cmp top {
@@ -236,6 +247,8 @@ branch_cmp_funcs! {
     beq ( == );
     bne ( != );
     blt ( < );
+    ble ( <= );
+    bgt ( > );
     bge ( >= );
 }
 

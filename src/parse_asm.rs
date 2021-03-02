@@ -100,9 +100,9 @@ fn process_asm_line(assem: &mut Assembler, line: &str) -> Result<(), ParserError
     match args {
         [] => {
             assem.add_inst(verb, 0);
-        }
+        },
         [arg] => {
-            return match parse_inst_arg(arg) {
+            return match parse_integer(arg) {
                 Ok(arg) => {
                     assem.add_inst(verb, arg);
                     Ok(())
@@ -122,7 +122,7 @@ fn process_asm_line(assem: &mut Assembler, line: &str) -> Result<(), ParserError
     Ok(())
 }
 
-fn parse_inst_arg(arg: &str) -> Result<i32, ParserError> {
+fn parse_integer(arg: &str) -> Result<i32, ParserError> {
     if arg.starts_with("0x") {
         return match i32::from_str_radix(&arg[2..], 16) {
             Ok(arg) => Ok(arg),
@@ -172,7 +172,7 @@ fn process_macro(assem: &mut Assembler, verb: &str, args: &[&str]) -> Result<(),
                 assem.add_local_var(local_name, 1);
             }
         }
-        ".array" => {
+        ".stack_array" => {
             if let Some(err) = expect_num_args(verb, args, 2..=2) {
                 return Err(err);
             }
@@ -195,6 +195,17 @@ fn process_macro(assem: &mut Assembler, verb: &str, args: &[&str]) -> Result<(),
         }
         ".end_frame" => {
             assem.end_frame();
+        }
+        ".define" => {
+            if let Some(err) = expect_num_args(verb, args, 2..=2) {
+                return Err(err);
+            }
+            let name = args[0];
+            let value = match parse_integer(args[1]) {
+                Ok(value) => value,
+                Err(err) => return Err(err),
+            };
+            assem.add_constant(name, value);
         }
         unknown => return Err(UnknownMacro { verb: unknown.to_string() })
     }

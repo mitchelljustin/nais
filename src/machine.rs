@@ -9,10 +9,10 @@ use MachineStatus::*;
 
 use crate::assembler::{DebugInfo, ResolvedLabel};
 use crate::constants::DEFAULT_MAX_CYCLES;
-use crate::mem::{addrs, segs};
 use crate::isa::{Encoder, Inst};
-use crate::util;
+use crate::mem::{addrs, segs};
 use crate::mem::Memory;
+use crate::util;
 use crate::util::inst_loc_to_addr;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -32,7 +32,7 @@ pub enum MachineError {
     MaxCyclesReached,
 }
 
-#[derive(Debug, PartialEq,  Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum MachineStatus {
     Idle,
     Running,
@@ -139,7 +139,8 @@ impl Machine {
     }
 
     fn debug_cycle(&mut self) {
-        println!("{}", self.code_dump_around_pc(-4..5));
+        println!("CODE:\n{}", self.code_dump_around_pc(-4..5));
+        println!("STACK:\n{}", self.stack_dump_from(6));
         loop {
             print!("debug% ");
             io::stdout().flush().unwrap();
@@ -168,7 +169,7 @@ impl Machine {
                         [len] =>
                             println!("{}", self.code_dump_around_pc(-len..len + 1)),
                         [] =>
-                            println!("{}", self.code_dump_around_pc(-4..5)),
+                            println!("{}", self.code_dump_around_pc(-8..9)),
                         _ => {
                             println!("format: pc addr [range]");
                         }
@@ -254,6 +255,11 @@ impl Machine {
             out.write_str("\n").unwrap();
         }
         out
+    }
+
+    pub fn stack_dump_from(&self, offset: i32) -> String {
+        let sp = self.getsp();
+        self.stack_mem_dump((sp - offset)..sp)
     }
 
     pub fn stack_dump(&self) -> String {
