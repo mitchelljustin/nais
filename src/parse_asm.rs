@@ -1,4 +1,5 @@
-use std::fs;
+use std::{fmt, fs};
+use std::fmt::Formatter;
 use std::io;
 use std::num::ParseIntError;
 use std::ops::RangeInclusive;
@@ -6,12 +7,27 @@ use std::ops::RangeInclusive;
 use Error::*;
 use ParserError::*;
 
-use crate::assemble::Assembler;
+use crate::assembler::Assembler;
 
-#[derive(Debug)]
 pub enum Error {
     IOError(io::Error),
     ParserErrors(Vec<(usize, ParserError)>),
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            IOError(e) => e.fmt(f),
+            ParserErrors(errors) => {
+                for (loc, err) in errors.into_iter() {
+                    if let Err(e) = write!(f, "Line {}: {}", loc, err) {
+                        return Err(e);
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -19,7 +35,16 @@ pub enum ParserError {
     UnknownMacro { verb: String },
     WrongNumberOfArguments { verb: String, expected: RangeInclusive<usize>, actual: usize },
     InvalidIntegerArg(ParseIntError),
+    OnlyAsciiCharsSupported { char: String },
     InstHasMultipleArgs { verb: String, args: Vec<String> },
+
+    _NotAnIntegerArg,
+}
+
+impl fmt::Display for ParserError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
 }
 
 pub fn load_asm_file(filename: &str) -> Result<Assembler, Error> {
@@ -77,23 +102,44 @@ fn process_asm_line(assem: &mut Assembler, line: &str) -> Result<(), ParserError
             assem.add_inst(verb, 0);
         }
         [arg] => {
-            if arg.starts_with("0x") {
-                match i32::from_str_radix(&arg[2..], 16) {
-                    Ok(arg) => assem.add_inst(verb, arg),
-                    Err(err) => return Err(InvalidIntegerArg(err)),
-                };
-            } else if let Ok(arg) = i32::from_str_radix(arg, 10) {
-                assem.add_inst(verb, arg);
-            } else {
-                assem.add_placeholder_inst(verb, arg);
-            }
+            return match parse_inst_arg(arg) {
+                Ok(arg) => {
+                    assem.add_inst(verb, arg);
+                    Ok(())
+                }
+                Err(_NotAnIntegerArg) => {
+                    assem.add_placeholder_inst(verb, arg);
+                    Ok(())
+                }
+                Err(err) => Err(err),
+            };
         }
         _ => return Err(InstHasMultipleArgs {
             verb: verb.to_string(),
             args: args.into_iter().map(|s| s.to_string()).collect(),
-        })
+        }),
     }
     Ok(())
+}
+
+fn parse_inst_arg(arg: &str) -> Result<i32, ParserError> {
+    if arg.starts_with("0x") {
+        return match i32::from_str_radix(&arg[2..], 16) {
+            Ok(arg) => Ok(arg),
+            Err(err) => Err(InvalidIntegerArg(err)),
+        };
+    }
+    if let Ok(arg) = i32::from_str_radix(arg, 10) {
+        return Ok(arg);
+    }
+    if arg.len() == 3 && arg.starts_with("'") && arg.ends_with("'") {
+        let char = &arg[1..2];
+        if !char.is_ascii() {
+            return Err(OnlyAsciiCharsSupported { char: char.to_string() });
+        }
+        return Ok(char.bytes().next().unwrap() as i32);
+    }
+    Err(_NotAnIntegerArg)
 }
 
 fn expect_num_args(verb: &str, args: &[&str], expected: RangeInclusive<usize>) -> Option<ParserError> {
@@ -137,6 +183,12 @@ fn process_macro(assem: &mut Assembler, verb: &str, args: &[&str]) -> Result<(),
             };
             assem.add_local_var(name, len);
             assem.add_local_const(&format!("{}.len", name), len);
+        }
+        ".return" => {
+            if let Some(err) = expect_num_args(verb, args, 1..=1) {
+                return Err(err);
+            }
+            assem.set_retval_name(args[0]);
         }
         ".start_frame" => {
             assem.start_frame();

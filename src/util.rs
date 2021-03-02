@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use crate::mem::addrs;
 
 pub fn parse_hex(s: &str) -> Option<i32> {
@@ -20,4 +22,12 @@ macro_rules! unwrap_or_return {
             Some(x) => x,
         }
     };
+}
+
+pub fn dump_errors<T: Display>(errors: &[T]) -> String {
+    errors
+        .iter()
+        .map(|e| e.to_string())
+        .collect::<Vec<String>>()
+        .join("\n")
 }

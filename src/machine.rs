@@ -7,7 +7,7 @@ use std::ops::Range;
 use MachineError::*;
 use MachineStatus::*;
 
-use crate::assemble::{DebugInfo, ResolvedLabel};
+use crate::assembler::{DebugInfo, ResolvedLabel};
 use crate::constants::DEFAULT_MAX_CYCLES;
 use crate::mem::{addrs, segs};
 use crate::isa::{Encoder, Inst};
@@ -15,7 +15,7 @@ use crate::util;
 use crate::mem::Memory;
 use crate::util::inst_loc_to_addr;
 
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum MachineError {
     IllegalSPReductionBelowMin { newsp: i32 },
     IllegalDirectWriteSP,
@@ -28,10 +28,11 @@ pub enum MachineError {
     CodeAccessSegFault { addr: i32 },
     ProgramExit(i32),
     NoSuchEnvCall(i32),
+    EnvCallErr(String),
     MaxCyclesReached,
 }
 
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq,  Clone)]
 pub enum MachineStatus {
     Idle,
     Running,
@@ -125,10 +126,6 @@ impl Machine {
             return;
         }
         self.unsafe_store(addrs::SP, newsp);
-    }
-
-    pub fn print(&mut self, val: i32) {
-        println!("{:8x} [{}]", val, val);
     }
 
     pub fn breakpoint(&mut self) {
@@ -271,7 +268,7 @@ impl Machine {
             Some(frame) => self.debug_info.call_frames
                 .get(frame)
                 .unwrap()
-                .local_labels.iter()
+                .frame_labels.iter()
                 .map(|(name, off)| (off, name))
                 .collect(),
             None => HashMap::new(),

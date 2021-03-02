@@ -3,7 +3,7 @@ use std::fmt::{Display, Formatter};
 use std::fmt;
 use std::ops::Range;
 
-use crate::assemble::AssemblyError::MissingTarget;
+use crate::assembler::AssemblyError::{MissingTarget, FrameRetvalAlreadyDefined};
 use crate::isa::{Encoder, Inst, OP_INVALID};
 use crate::isa;
 use crate::mem::addrs;
@@ -69,8 +69,9 @@ impl Display for LabelType {
 pub struct CallFrame {
     pub name: String,
     pub addr_range: Range<i32>,
-    pub local_labels: HashMap<String, i32>,
+    pub frame_labels: HashMap<String, i32>,
     pub inner_labels: HashMap<String, i32>,
+    pub retval_name: Option<String>,
     pub locals_size: i32,
     pub args_size: i32,
 }
@@ -80,6 +81,7 @@ pub enum AssemblyError {
     NeedToDefineEntryLabel,
     MissingTarget(Inst, String),
     NoSuchOp(i32, String),
+    FrameRetvalAlreadyDefined { existing: String, new: String },
 }
 
 impl Display for AssemblyError {
@@ -127,14 +129,21 @@ impl Assembler {
         self.add_global_var("pc", addrs::PC);
         self.add_global_var("sp", addrs::SP);
         self.add_global_var("fp", addrs::FP);
-        for (callcode, name) in isa::ENV_CALLS.iter().enumerate() {
+        for (callcode, (_, name)) in isa::env_call::LIST.iter().enumerate() {
             self.add_constant(name, callcode as i32);
         }
     }
 
     pub fn add_inst(&mut self, opname: &str, arg: i32) {
         let addr = self.next_inst_addr();
-        let inst = match self.encoder.make_inst(opname, arg) {
+        self.frame_name_for_inst.insert(addr, self.cur_frame_name.clone());
+        match self.encoder.make_inst(opname, arg) {
+            Some(inst) => {
+                self.instructions.push(Inst {
+                    addr: Some(addr),
+                    ..inst
+                });
+            }
             None => {
                 self.errors.push(AssemblyError::NoSuchOp(
                     addr, opname.to_string()));
@@ -144,15 +153,8 @@ impl Assembler {
                     addr: Some(addr),
                     arg,
                 });
-                return;
             }
-            Some(inst) => inst
         };
-        self.instructions.push(Inst {
-            addr: Some(addr),
-            ..inst
-        });
-        self.frame_name_for_inst.insert(addr, self.cur_frame_name.clone());
     }
 
     fn next_inst_loc(&self) -> usize {
@@ -175,10 +177,11 @@ impl Assembler {
         self.call_frames.insert(name.to_string(), CallFrame {
             name: name.to_string(),
             addr_range: self.next_inst_addr()..-1,
-            local_labels: HashMap::new(),
+            frame_labels: HashMap::new(),
             inner_labels: HashMap::new(),
+            retval_name: None,
             locals_size: 0,
-            args_size: 0,
+            args_size: 0, // retval always included
         });
         self.cur_frame_name = name.to_string();
     }
@@ -211,7 +214,7 @@ impl Assembler {
 
     pub fn add_local_var(&mut self, name: &str, size: i32) {
         let frame = self.cur_frame();
-        frame.local_labels.insert(
+        frame.frame_labels.insert(
             name.to_string(),
             frame.locals_size,
         );
@@ -220,16 +223,30 @@ impl Assembler {
 
     pub fn add_local_const(&mut self, name: &str, val: i32) {
         let frame = self.cur_frame();
-        frame.local_labels.insert(name.to_string(), val);
+        frame.frame_labels.insert(name.to_string(), val);
     }
 
     pub fn add_arg_var(&mut self, name: &str, size: i32) {
         let frame = self.cur_frame();
-        frame.local_labels.insert(
+        frame.frame_labels.insert(
             name.to_string(),
-            -frame.args_size - 3, // [..args retaddr savedfp || locals ]
+            -frame.args_size - 4, // [..args retval retaddr savedfp || locals ]
         );
         frame.args_size += size;
+    }
+
+    pub fn set_retval_name(&mut self, name: &str) {
+        let frame = self.cur_frame();
+        if let Some(existing) = &frame.retval_name {
+            let existing = existing.clone();
+            self.errors.push(FrameRetvalAlreadyDefined {
+                existing,
+                new: name.to_string(),
+            });
+            return;
+        }
+        frame.frame_labels.insert(name.to_string(), -3);
+        frame.retval_name = Some(name.to_string());
     }
 
     pub fn add_constant(&mut self, name: &str, value: i32) {
@@ -296,7 +313,12 @@ impl Assembler {
             });
         }
         // Local frame
-        let frame_name = self.frame_name_for_inst.get(&inst_addr).unwrap();
+        let frame_name = match self.frame_name_for_inst.get(&inst_addr) {
+            None => {
+                panic!();
+            },
+            Some(x) => x,
+        };
         let frame = match self.call_frames.get(frame_name) {
             None => return None,
             Some(f) => f,
@@ -315,7 +337,7 @@ impl Assembler {
             });
         }
         // Local frame var
-        if let Some(&value) = frame.local_labels.get(&target) {
+        if let Some(&value) = frame.frame_labels.get(&target) {
             return Some(ResolvedLabel {
                 inst_addr,
                 target,

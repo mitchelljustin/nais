@@ -3,9 +3,9 @@ use std::fmt::{Debug, Display, Formatter, Result};
 
 use crate::machine::{MachineError, MachineStatus};
 use crate::machine::MachineStatus::Stopped;
+use crate::mem::addrs;
 
 use super::Machine;
-use crate::mem::addrs;
 
 // --- START OP FUNCTIONS ---
 
@@ -71,35 +71,72 @@ pub fn storef(m: &mut Machine, offset: i32) {
     }
 }
 
-pub fn print(m: &mut Machine, _: i32) {
-    if let Some(x) = pop(m) {
-        m.print(x);
+pub mod env_call {
+    use std::io;
+    use std::io::Write;
+
+    use crate::machine::MachineError::EnvCallErr;
+
+    use super::*;
+
+    fn exit(m: &mut Machine) {
+        match pop(m) {
+            Some(0) =>
+                m.set_status(Stopped),
+            Some(status) =>
+                m.set_status(MachineStatus::Error(MachineError::ProgramExit(status))),
+            None => {}
+        };
     }
+
+    fn write(m: &mut Machine) {
+        if let (Some(fd), Some(buf), Some(buf_len)) = (pop(m), pop(m), pop(m)) {
+            match fd {
+                1 => {
+                    // TODO: support reading from DATA segment
+                    let data: Vec<u8> = (buf..(buf + buf_len))
+                        .filter_map(|addr| m.stack_load(addr))
+                        .map(|val| val as u8)
+                        .collect();
+                    if data.len() != buf_len as usize {
+                        m.set_error(EnvCallErr("error reading memory".to_string()));
+                        return;
+                    }
+                    match io::stdout().write(&data) {
+                        Err(err) => m.set_error(EnvCallErr(format!("IO error: {}", err))),
+                        Ok(_) => {}
+                    }
+                }
+                _ => {
+                    m.set_error(EnvCallErr(format!("cannot write to fd: {}", fd)))
+                }
+            }
+        }
+    }
+
+    macro_rules! def_env_call_list {
+        ( $($name:ident)+ ) => {
+            pub const LIST: &[(fn(&mut Machine), &'static str)] = &[
+                $(
+                    ($name, stringify!($name)),
+                )+
+            ];
+        }
+    }
+
+    def_env_call_list![
+        exit
+        write
+    ];
 }
 
-pub const ENV_CALLS: &[&str] = &[
-    "exit",
-];
-
 pub fn ecall(m: &mut Machine, callcode: i32) {
-    if callcode < 0 || callcode >= ENV_CALLS.len() as i32 {
+    if callcode < 0 || callcode >= env_call::LIST.len() as i32 {
         m.set_status(MachineStatus::Error(MachineError::NoSuchEnvCall(callcode)));
         return;
     }
-    let call_name = ENV_CALLS[callcode as usize];
-
-    match call_name {
-        "exit" => {
-            match pop(m) {
-                Some(0) =>
-                    m.set_status(Stopped),
-                Some(status) =>
-                    m.set_status(MachineStatus::Error(MachineError::ProgramExit(status))),
-                None => {}
-            }
-        }
-        _ => {}
-    }
+    let (env_call_func, _) = env_call::LIST[callcode as usize];
+    env_call_func(m);
 }
 
 pub fn ebreak(m: &mut Machine, _: i32) {
@@ -264,7 +301,7 @@ impl Debug for Op {
     }
 }
 
-macro_rules! register_ops {
+macro_rules! def_op_list {
     ( $($name:ident)+ ) => {
         pub const OP_LIST: &'static [Op] = &[
             $(
@@ -277,7 +314,7 @@ macro_rules! register_ops {
     }
 }
 
-register_ops!(
+def_op_list![
     invald
     push addsp
     add sub mul div rem and or xor
@@ -287,8 +324,7 @@ register_ops!(
     load store loadi storei loadf storef
     jump jal ret
     ecall ebreak
-    print
-);
+];
 
 pub const OP_INVALID: &'static Op = &OP_LIST[0];
 

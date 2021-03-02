@@ -5,14 +5,9 @@ entry:
     push state.len
     loadi fp
     addi state
+    push ; retval
     jal fill_array
-    addsp -2
-
-    push state.len
-    loadi fp
-    addi state
-    jal print_array
-    addsp -2
+    addsp -3
 
     .end_frame
 
@@ -39,8 +34,10 @@ _loop:
     store
 
     loadf val
+    push
     jal increment
     storef val
+    addsp -1
 
     loadf index
     addi 1
@@ -54,39 +51,14 @@ _loop:
     ret
 
 increment:
+    .return retval
     .args val
 
     .start_frame
 
     loadf val
     addi 1
-    storef val
-
-    .end_frame
-    ret
-
-print_array:
-    .args array array.len
-    .locals index
-    .start_frame
-
-    push 0;
-    storef index;
-
-_loop:
-    loadf index
-    loadf array
-    add
-    load
-    print
-
-    loadf index
-    addi 1
-    storef index
-
-    loadf index
-    loadf array.len
-    blt _loop
+    storef retval
 
     .end_frame
     ret
