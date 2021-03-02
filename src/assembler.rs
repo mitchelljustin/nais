@@ -253,22 +253,18 @@ impl Assembler {
         self.constants.insert(String::from(name), value);
     }
 
-    pub fn start_frame(&mut self) {
-        self.add_placeholder_inst("loadi", "fp");
-        self.add_placeholder_inst("loadi", "sp");
-        self.add_placeholder_inst("storei", "fp");
+    pub fn alloc_locals(&mut self) {
         let extend_sz = self.cur_frame().locals_size;
         if extend_sz > 0 {
             self.add_inst("addsp", extend_sz);
         }
     }
 
-    pub fn end_frame(&mut self) {
+    pub fn free_locals(&mut self) {
         let drop_sz = self.cur_frame().locals_size;
         if drop_sz > 0 {
             self.add_inst("addsp", -drop_sz);
         }
-        self.add_placeholder_inst("storei", "fp");
     }
 
     pub fn finish(&mut self) {

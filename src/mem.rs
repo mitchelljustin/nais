@@ -1,18 +1,22 @@
-use std::ops::{Index, IndexMut};
 use std::iter;
 use std::iter::FromIterator;
+use std::ops::{Index, IndexMut};
 
 pub mod segs {
-    use std::ops::Range;
     use std::cmp;
+    use std::ops::Range;
 
     pub struct Segment {
         pub name: &'static str,
         pub addr_range: Range<i32>,
     }
+
     impl Segment {
         pub const fn start(&self) -> i32 {
             self.addr_range.start
+        }
+        pub const fn end(&self) -> i32 {
+            self.addr_range.end
         }
 
         pub fn len(&self) -> usize {
@@ -46,17 +50,18 @@ pub mod segs {
         &CODE,
         &DATA,
     ];
+    pub const ADDR_SPACE: Range<i32> = STACK.start()..DATA.end();
 }
 
 pub(crate) mod addrs {
     // Stack constants
-    pub const PC:          i32 = 0x00_00_00_00;
-    pub const SP:          i32 = 0x00_00_00_01;
-    pub const FP:          i32 = 0x00_00_00_02;
-    pub const BOUNDARY:    i32 = 0x00_00_00_03;
-    pub const INIT_SP:     i32 = 0x00_00_00_04;
+    pub const PC: i32 = 0x00_00_00_00;
+    pub const SP: i32 = 0x00_00_00_01;
+    pub const FP: i32 = 0x00_00_00_02;
+    pub const BOUNDARY: i32 = 0x00_00_00_03;
+    pub const INIT_SP: i32 = 0x00_00_00_04;
     // Code constants
-    pub const CODE_ENTRY:  i32 = super::segs::CODE.start();
+    pub const CODE_ENTRY: i32 = super::segs::CODE.start();
 }
 
 
@@ -71,10 +76,10 @@ impl Memory {
             vec: Vec::from_iter(iter::repeat(0).take(total_len)),
         };
         // Initialize stack
-        mem[addrs::PC]         = addrs::CODE_ENTRY;
-        mem[addrs::SP]         = addrs::INIT_SP;
-        mem[addrs::FP]         = 0xff_ff_ff;
-        mem[addrs::BOUNDARY]   = 0xbb_bb_bb;
+        mem[addrs::PC] = addrs::CODE_ENTRY;
+        mem[addrs::SP] = addrs::INIT_SP;
+        mem[addrs::FP] = 0xff_ff_ff;
+        mem[addrs::BOUNDARY] = 0xbb_bb_bb;
         mem
     }
 }

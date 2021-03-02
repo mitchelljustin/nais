@@ -29,6 +29,8 @@ pub enum MachineError {
     ProgramExit(i32),
     NoSuchEnvCall(i32),
     EnvCallErr(String),
+    LoadAddressOutOfBounds { addr: i32 },
+    StoreAddressOutOfBounds { addr: i32 },
     MaxCyclesReached,
 }
 
@@ -105,11 +107,20 @@ impl Machine {
     }
 
     pub fn unsafe_store(&mut self, addr: i32, val: i32) {
-        self.mem[addr] = val;
+        if segs::ADDR_SPACE.contains(&addr) {
+            self.mem[addr] = val;
+        } else {
+            self.set_error(StoreAddressOutOfBounds { addr });
+        }
     }
 
     pub fn unsafe_load(&mut self, addr: i32) -> i32 {
-        self.mem[addr]
+        if segs::ADDR_SPACE.contains(&addr) {
+            self.mem[addr]
+        } else {
+            self.set_error(LoadAddressOutOfBounds { addr });
+            0
+        }
     }
 
     pub fn setpc(&mut self, newpc: i32) {

@@ -60,154 +60,214 @@ pub fn parse_asm<T: io::Read>(mut source: T) -> Result<Assembler, Error> {
         Ok(_) => {}
         Err(err) => return Err(IOError(err)),
     };
-    let mut assem = Assembler::new();
-    let mut errors: Vec<(usize, ParserError)> = Vec::new();
-    assem.init();
-    for (line_no, line) in text.lines().enumerate() {
-        match process_asm_line(&mut assem, line) {
-            Err(e) => errors.push((line_no, e)),
-            _ => {}
-        }
-    }
-    assem.finish();
-    if !errors.is_empty() {
-        return Err(ParserErrors(errors));
-    }
-    Ok(assem)
-}
-
-fn process_asm_line(assem: &mut Assembler, line: &str) -> Result<(), ParserError> {
-    let line = line.to_string();
-    let line = line.split(";").next().unwrap(); // Remove comments
-    let words: Vec<&str> = line.split_ascii_whitespace().collect();
-    if words.len() == 0 {
-        return Ok(());
-    }
-    let verb = words[0];
-    if verb.ends_with(":") {
-        let name = &verb[..verb.len() - 1];
-        if verb.starts_with("_") {
-            assem.add_inner_label(name);
-        } else {
-            assem.add_top_level_label(name);
-        }
-        return Ok(());
-    }
-    let args = &words[1..];
-    if verb.starts_with(".") {
-        return process_macro(assem, verb, args);
-    }
-    match args {
-        [] => {
-            assem.add_inst(verb, 0);
-        },
-        [arg] => {
-            return match parse_integer(arg) {
-                Ok(arg) => {
-                    assem.add_inst(verb, arg);
-                    Ok(())
-                }
-                Err(_NotAnIntegerArg) => {
-                    assem.add_placeholder_inst(verb, arg);
-                    Ok(())
-                }
-                Err(err) => Err(err),
-            };
-        }
-        _ => return Err(InstHasMultipleArgs {
-            verb: verb.to_string(),
-            args: args.into_iter().map(|s| s.to_string()).collect(),
-        }),
-    }
-    Ok(())
-}
-
-fn parse_integer(arg: &str) -> Result<i32, ParserError> {
-    if arg.starts_with("0x") {
-        return match i32::from_str_radix(&arg[2..], 16) {
-            Ok(arg) => Ok(arg),
-            Err(err) => Err(InvalidIntegerArg(err)),
-        };
-    }
-    if let Ok(arg) = i32::from_str_radix(arg, 10) {
-        return Ok(arg);
-    }
-    if arg.len() == 3 && arg.starts_with("'") && arg.ends_with("'") {
-        let char = &arg[1..2];
-        if !char.is_ascii() {
-            return Err(OnlyAsciiCharsSupported { char: char.to_string() });
-        }
-        return Ok(char.bytes().next().unwrap() as i32);
-    }
-    Err(_NotAnIntegerArg)
-}
-
-fn expect_num_args(verb: &str, args: &[&str], expected: RangeInclusive<usize>) -> Option<ParserError> {
-    if !expected.contains(&args.len()) {
-        Some(WrongNumberOfArguments {
-            expected,
-            actual: args.len(),
-            verb: verb.to_string(),
-        })
+    let mut parser = Parser::new();
+    parser.init();
+    parser.process(text);
+    parser.finish();
+    if !parser.errors.is_empty() {
+        Err(ParserErrors(parser.errors))
     } else {
-        None
+        Ok(parser.assem)
     }
 }
 
-fn process_macro(assem: &mut Assembler, verb: &str, args: &[&str]) -> Result<(), ParserError> {
-    match verb {
-        ".args" => {
-            if let Some(err) = expect_num_args(verb, args, 1..=10) {
-                return Err(err);
-            }
-            for arg_name in args {
-                assem.add_arg_var(arg_name, 1);
-            }
-        }
-        ".locals" => {
-            if let Some(err) = expect_num_args(verb, args, 1..=10) {
-                return Err(err);
-            }
-            for local_name in args {
-                assem.add_local_var(local_name, 1);
-            }
-        }
-        ".stack_array" => {
-            if let Some(err) = expect_num_args(verb, args, 2..=2) {
-                return Err(err);
-            }
-            let name = args[0];
-            let len = match i32::from_str_radix(args[1], 10) {
-                Ok(len) => len,
-                Err(err) => return Err(InvalidIntegerArg(err)),
-            };
-            assem.add_local_var(name, len);
-            assem.add_local_const(&format!("{}.len", name), len);
-        }
-        ".return" => {
-            if let Some(err) = expect_num_args(verb, args, 1..=1) {
-                return Err(err);
-            }
-            assem.set_retval_name(args[0]);
-        }
-        ".start_frame" => {
-            assem.start_frame();
-        }
-        ".end_frame" => {
-            assem.end_frame();
-        }
-        ".define" => {
-            if let Some(err) = expect_num_args(verb, args, 2..=2) {
-                return Err(err);
-            }
-            let name = args[0];
-            let value = match parse_integer(args[1]) {
-                Ok(value) => value,
-                Err(err) => return Err(err),
-            };
-            assem.add_constant(name, value);
-        }
-        unknown => return Err(UnknownMacro { verb: unknown.to_string() })
-    }
-    Ok(())
+
+struct Parser {
+    pub errors: Vec<(usize, ParserError)>,
+    pub assem: Assembler,
+
+    local_addrs: Vec<String>,
 }
+
+impl Parser {
+    pub fn new() -> Parser {
+        Parser {
+            assem: Assembler::new(),
+            errors: Vec::new(),
+            local_addrs: Vec::new(),
+        }
+    }
+
+    pub fn init(&mut self) {
+        self.assem.init();
+    }
+
+    pub fn process(&mut self, text: String) {
+        for (line_no, line) in text.lines().enumerate() {
+            match self.process_asm_line(line) {
+                Err(e) => self.errors.push((line_no, e)),
+                _ => {}
+            }
+        }
+    }
+
+    pub fn finish(&mut self) {
+        self.assem.finish();
+    }
+
+    fn process_asm_line(&mut self, line: &str) -> Result<(), ParserError> {
+        let line = line.to_string();
+        let line = line.split(";").next().unwrap(); // Remove comments
+        let words: Vec<&str> = line.split_ascii_whitespace().collect();
+        if words.len() == 0 {
+            return Ok(());
+        }
+        let verb = words[0];
+        if verb.ends_with(":") {
+            let name = &verb[..verb.len() - 1];
+            if verb.starts_with("_") {
+                self.assem.add_inner_label(name);
+            } else {
+                self.assem.add_top_level_label(name);
+            }
+            return Ok(());
+        }
+        let args = &words[1..];
+        if verb.starts_with(".") {
+            return self.process_macro(verb, args);
+        }
+        match args {
+            [] => {
+                self.assem.add_inst(verb, 0);
+            },
+            [arg] => {
+                return match Parser::parse_integer(arg) {
+                    Ok(arg) => {
+                        self.assem.add_inst(verb, arg);
+                        Ok(())
+                    }
+                    Err(_NotAnIntegerArg) => {
+                        self.assem.add_placeholder_inst(verb, arg);
+                        Ok(())
+                    }
+                    Err(err) => Err(err),
+                };
+            }
+            _ => return Err(InstHasMultipleArgs {
+                verb: verb.to_string(),
+                args: args.into_iter().map(|s| s.to_string()).collect(),
+            }),
+        }
+        Ok(())
+    }
+
+    fn process_macro(&mut self, verb: &str, args: &[&str]) -> Result<(), ParserError> {
+        match verb {
+            ".args" => {
+                if let Some(err) = Parser::expect_num_args(verb, args, 1..=10) {
+                    return Err(err);
+                }
+                for arg_name in args {
+                    self.assem.add_arg_var(arg_name, 1);
+                }
+            }
+            ".locals" => {
+                if let Some(err) = Parser::expect_num_args(verb, args, 1..=10) {
+                    return Err(err);
+                }
+                for name in args {
+                    self.assem.add_local_var(name, 1);
+                    self.assem.add_local_const(&format!("{}.len", name), 1);
+                }
+            }
+            ".local_addrs" => {
+                if let Some(err) = Parser::expect_num_args(verb, args, 1..=10) {
+                    return Err(err);
+                }
+                for name in args {
+                    self.assem.add_local_var(&Parser::addr_name(name), 1);
+                    self.local_addrs.push(name.to_string());
+                }
+            }
+            ".stack_array" => {
+                if let Some(err) = Parser::expect_num_args(verb, args, 2..=2) {
+                    return Err(err);
+                }
+                let name = args[0];
+                let len = match i32::from_str_radix(args[1], 10) {
+                    Ok(len) => len,
+                    Err(err) => return Err(InvalidIntegerArg(err)),
+                };
+                self.assem.add_local_var(name, len);
+                self.assem.add_local_const(&format!("{}.len", name), len);
+            }
+            ".return" => {
+                if let Some(err) = Parser::expect_num_args(verb, args, 1..=1) {
+                    return Err(err);
+                }
+                self.assem.set_retval_name(args[0]);
+            }
+            ".start_frame" => {
+                self.assem.add_placeholder_inst("loadi", "fp");
+
+                self.assem.add_placeholder_inst("loadi", "sp");
+                self.assem.add_placeholder_inst("storei", "fp");
+
+                self.assem.alloc_locals();
+
+                for name in self.local_addrs.drain(..) {
+                    self.assem.add_placeholder_inst("loadi", "fp");
+                    self.assem.add_placeholder_inst("addi", &name);
+                    self.assem.add_placeholder_inst("storef", &Parser::addr_name(&name));
+                }
+            }
+            ".end_frame" => {
+                self.assem.free_locals();
+
+                self.assem.add_placeholder_inst("storei", "fp");
+            }
+            ".define" => {
+                if let Some(err) = Parser::expect_num_args(verb, args, 2..=2) {
+                    return Err(err);
+                }
+                let name = args[0];
+                let value = match Parser::parse_integer(args[1]) {
+                    Ok(value) => value,
+                    Err(err) => return Err(err),
+                };
+                self.assem.add_constant(name, value);
+            }
+            unknown => return Err(UnknownMacro { verb: unknown.to_string() })
+        }
+        Ok(())
+    }
+
+
+
+    fn parse_integer(arg: &str) -> Result<i32, ParserError> {
+        if arg.starts_with("0x") {
+            return match i32::from_str_radix(&arg[2..], 16) {
+                Ok(arg) => Ok(arg),
+                Err(err) => Err(InvalidIntegerArg(err)),
+            };
+        }
+        if let Ok(arg) = i32::from_str_radix(arg, 10) {
+            return Ok(arg);
+        }
+        if arg.len() == 3 && arg.starts_with("'") && arg.ends_with("'") {
+            let char = &arg[1..2];
+            if !char.is_ascii() {
+                return Err(OnlyAsciiCharsSupported { char: char.to_string() });
+            }
+            return Ok(char.bytes().next().unwrap() as i32);
+        }
+        Err(_NotAnIntegerArg)
+    }
+
+    fn expect_num_args(verb: &str, args: &[&str], expected: RangeInclusive<usize>) -> Option<ParserError> {
+        if !expected.contains(&args.len()) {
+            Some(WrongNumberOfArguments {
+                expected,
+                actual: args.len(),
+                verb: verb.to_string(),
+            })
+        } else {
+            None
+        }
+    }
+
+    fn addr_name(local_name: &str) -> String {
+        format!("{}.addr", local_name)
+    }
+}
+

@@ -2,21 +2,18 @@
 
 entry:
     .stack_array ints 16
-    .locals ints_addr
+    .local_addrs ints
+
     .start_frame
 
-    loadi fp
-    addi ints
-    storef ints_addr
-
     push ints.len
-    loadf ints_addr
+    loadf ints.addr
     push
     jal fill_array
     addsp -3
 
     push ints.len
-    loadf ints_addr
+    loadf ints.addr
     push
     jal print_ints
     addsp -3
@@ -62,12 +59,9 @@ fill_array:
 
 print_ints:
     .args ints ints.len
-    .locals index int char char.addr
+    .locals index int char
+    .local_addrs char
     .start_frame
-
-    loadi fp
-    addi char
-    storef char.addr
 
     push 0
     storef index
@@ -85,7 +79,7 @@ print_ints:
         storef char
         addsp -1
 
-        push 1 ; len(char) = 1
+        push char.len
         loadf char.addr
         push stdout
         ecall write
@@ -102,7 +96,7 @@ print_ints:
     push 0x0a
     storef char
 
-    push 1
+    push char.len
     loadf char.addr
     push stdout
     ecall write

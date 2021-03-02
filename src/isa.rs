@@ -75,9 +75,18 @@ pub mod env_call {
     use std::io;
     use std::io::Write;
 
+
     use crate::machine::MachineError::EnvCallErr;
+    use crate::mem::segs;
 
     use super::*;
+
+    pub enum RetCode {
+        OK = 0,
+        AddressOutOfBounds = 1,
+        NotImplemented = 2,
+        IOError = 3,
+    }
 
     fn exit(m: &mut Machine) -> i32 {
         match pop(m) {
@@ -87,33 +96,31 @@ pub mod env_call {
                 m.set_status(MachineStatus::Error(MachineError::ProgramExit(status))),
             None => {}
         };
-        0
+        RetCode::OK as i32
     }
 
     fn write(m: &mut Machine) -> i32 {
         if let (Some(fd), Some(buf), Some(buf_len)) = (pop(m), pop(m), pop(m)) {
             match fd {
                 1 => {
-                    // TODO: support reading from DATA segment
-                    let data: Vec<u8> = (buf..(buf + buf_len))
-                        .filter_map(|addr| m.stack_load(addr))
-                        .map(|val| val as u8)
-                        .collect();
-                    if data.len() != buf_len as usize {
-                        m.set_error(EnvCallErr("error reading memory".to_string()));
-                        return 1;
+                    let addr_range = buf..(buf + buf_len);
+                    if buf < segs::ADDR_SPACE.start || buf + buf_len > segs::ADDR_SPACE.end {
+                        return RetCode::AddressOutOfBounds as i32;
                     }
+                    let data: Vec<u8> = addr_range
+                        .map(|addr| m.unsafe_load(addr) as u8)
+                        .collect();
                     match io::stdout().write(&data) {
                         Err(err) => {
                             m.set_error(EnvCallErr(format!("IO error: {}", err)));
-                            1
-                        },
-                        Ok(_) => 0,
+                            RetCode::IOError as i32
+                        }
+                        Ok(_) => RetCode::OK as i32,
                     }
                 }
                 _ => {
                     m.set_error(EnvCallErr(format!("cannot write to fd: {}", fd)));
-                    1
+                    RetCode::NotImplemented as i32
                 }
             }
         } else {
