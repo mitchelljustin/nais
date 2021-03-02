@@ -5,7 +5,6 @@ use std::ops::Range;
 
 use crate::assembler::AssemblyError::{MissingTarget, FrameRetvalAlreadyDefined};
 use crate::isa::{Encoder, Inst, OP_INVALID};
-use crate::isa;
 use crate::mem::addrs;
 use crate::util::inst_loc_to_addr;
 
@@ -129,9 +128,6 @@ impl Assembler {
         self.add_global_var("pc", addrs::PC);
         self.add_global_var("sp", addrs::SP);
         self.add_global_var("fp", addrs::FP);
-        for (callcode, (_, name)) in isa::env_call::LIST.iter().enumerate() {
-            self.add_constant(name, callcode as i32);
-        }
     }
 
     pub fn add_inst(&mut self, opname: &str, arg: i32) {

@@ -8,6 +8,7 @@ use Error::*;
 use ParserError::*;
 
 use crate::assembler::Assembler;
+use crate::isa;
 
 pub enum Error {
     IOError(io::Error),
@@ -90,6 +91,10 @@ impl Parser {
 
     pub fn init(&mut self) {
         self.assem.init();
+        for (callcode, (_, call_name)) in isa::env_call::LIST.iter().enumerate() {
+            let const_name = format!("callcode.{}", call_name);
+            self.assem.add_constant(&const_name, callcode as i32);
+        }
     }
 
     pub fn process(&mut self, text: String) {
@@ -167,7 +172,7 @@ impl Parser {
                 }
                 for name in args {
                     self.assem.add_local_var(name, 1);
-                    self.assem.add_local_const(&format!("{}.len", name), 1);
+                    self.assem.add_local_const(&Parser::len_name(name), 1);
                 }
             }
             ".local_addrs" => {
@@ -179,7 +184,7 @@ impl Parser {
                     self.local_addrs.push(name.to_string());
                 }
             }
-            ".stack_array" => {
+            ".local_array" => {
                 if let Some(err) = Parser::expect_num_args(verb, args, 2..=2) {
                     return Err(err);
                 }
@@ -189,7 +194,7 @@ impl Parser {
                     Err(err) => return Err(InvalidIntegerArg(err)),
                 };
                 self.assem.add_local_var(name, len);
-                self.assem.add_local_const(&format!("{}.len", name), len);
+                self.assem.add_local_const(&Parser::len_name(name), len);
             }
             ".return" => {
                 if let Some(err) = Parser::expect_num_args(verb, args, 1..=1) {
@@ -264,6 +269,10 @@ impl Parser {
         } else {
             None
         }
+    }
+
+    fn len_name(local_name: &str) -> String {
+        format!("{}.len", local_name)
     }
 
     fn addr_name(local_name: &str) -> String {

@@ -151,7 +151,7 @@ impl Machine {
 
     fn debug_cycle(&mut self) {
         println!("CODE:\n{}", self.code_dump_around_pc(-4..5));
-        println!("STACK:\n{}", self.stack_dump_from(6));
+        println!("STACK:\n{}", self.stack_dump_from(8));
         loop {
             print!("debug% ");
             io::stdout().flush().unwrap();
@@ -286,7 +286,13 @@ impl Machine {
                 .get(frame)
                 .unwrap()
                 .frame_labels.iter()
-                .map(|(name, off)| (off, name))
+                .filter_map(|(name, off)| {
+                    if name.ends_with(".len") { // meta-label
+                        None
+                    } else {
+                        Some((off, name))
+                    }
+                })
                 .collect(),
             None => HashMap::new(),
         };

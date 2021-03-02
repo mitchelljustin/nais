@@ -1,7 +1,7 @@
 .define stdout 1
 
 entry:
-    .stack_array ints 16
+    .local_array ints 20
     .local_addrs ints
 
     .start_frame
@@ -21,7 +21,7 @@ entry:
     .end_frame
 
     push 0
-    ecall exit
+    ecall callcode.exit
 
 fill_array:
     .args array array.len
@@ -59,8 +59,9 @@ fill_array:
 
 print_ints:
     .args ints ints.len
-    .locals index int char
-    .local_addrs char
+    .local_array out 2
+    .local_addrs out
+    .locals index int
     .start_frame
 
     push 0
@@ -76,13 +77,20 @@ print_ints:
         loadf int
         push
         jal int_to_hex_char
-        storef char
+        storef out
         addsp -1
 
-        push char.len
-        loadf char.addr
+        push 0x0a ; newline
+        push out
+        addi 1
+        loadi fp
+        add
+        store
+
+        push out.len
+        loadf out.addr
         push stdout
-        ecall write
+        ecall callcode.write
         addsp -1 ; ignore write result for now
 
         loadf index
@@ -93,14 +101,31 @@ print_ints:
         loadf ints.len
         blt _loop
 
-    push 0x0a
-    storef char
+    .end_frame
+    ret
 
-    push char.len
-    loadf char.addr
-    push stdout
-    ecall write
-    addsp -1
+int_to_hex:
+    .args int buf
+    .locals index char
+
+    .start_frame
+    push 0
+    storef index
+
+    _loop:
+        loadf int
+        push
+        jal int_to_hex_char
+        storef char
+
+        loadf char
+        loadf buf
+        store
+
+        loadf buf
+        addi 1
+        storef buf
+
 
     .end_frame
     ret
@@ -141,7 +166,6 @@ int_to_hex_char:
     _err:
         push '?'
         storef char
-
-_end:
-    .end_frame
-    ret
+    _end:
+        .end_frame
+        ret
