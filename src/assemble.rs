@@ -4,9 +4,10 @@ use std::fmt;
 use std::ops::Range;
 
 use crate::assemble::AssemblyError::MissingTarget;
-use crate::constants::{FP_ADDR, PC_ADDR, SEG_CODE_START, SP_ADDR};
 use crate::isa::{Encoder, Inst, OP_INVALID};
 use crate::isa;
+use crate::mem::addrs;
+use crate::util::inst_loc_to_addr;
 
 macro_rules! add_asm_line {
     ( [$target:ident] label $label:ident ) => {
@@ -174,10 +175,6 @@ pub struct Assembler {
     errors: Vec<AssemblyError>,
 }
 
-fn inst_loc_to_addr(loc: usize) -> i32 {
-    loc as i32 + SEG_CODE_START
-}
-
 impl Assembler {
     pub fn new() -> Assembler {
         Assembler {
@@ -195,9 +192,9 @@ impl Assembler {
     }
 
     pub fn init(&mut self) {
-        self.add_global_var("pc", PC_ADDR);
-        self.add_global_var("sp", SP_ADDR);
-        self.add_global_var("fp", FP_ADDR);
+        self.add_global_var("pc", addrs::PC);
+        self.add_global_var("sp", addrs::SP);
+        self.add_global_var("fp", addrs::FP);
         for (callcode, name) in isa::ENV_CALLS.iter().enumerate() {
             self.add_constant(name, callcode as i32);
         }

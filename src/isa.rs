@@ -5,7 +5,7 @@ use crate::machine::{MachineError, MachineStatus};
 use crate::machine::MachineStatus::Stopped;
 
 use super::Machine;
-use crate::constants::{FP_ADDR};
+use crate::mem::addrs;
 
 // --- START OP FUNCTIONS ---
 
@@ -54,7 +54,7 @@ pub fn store(m: &mut Machine, offset: i32) {
 }
 
 fn getfp(m: &mut Machine) -> i32 {
-    m.load(FP_ADDR).expect("frame pointer invalid")
+    m.load(addrs::FP).expect("frame pointer invalid")
 }
 
 pub fn loadf(m: &mut Machine, offset: i32) {

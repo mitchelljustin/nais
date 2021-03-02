@@ -8,9 +8,12 @@ use MachineError::*;
 use MachineStatus::*;
 
 use crate::assemble::{DebugInfo, ResolvedLabel};
-use crate::constants::{BOUNDARY_ADDR, DEFAULT_MAX_CYCLES, FP_ADDR, INIT_STACK, PC_ADDR, SEG_CODE_END, SEG_CODE_SIZE, SEG_CODE_START, SEG_STACK_END, SEG_STACK_SIZE, SEG_STACK_START, SP_ADDR, SP_MIN};
+use crate::constants::DEFAULT_MAX_CYCLES;
+use crate::mem::{addrs, segs};
 use crate::isa::{Encoder, Inst};
 use crate::util;
+use crate::mem::Memory;
+use crate::util::inst_loc_to_addr;
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum MachineError {
@@ -38,8 +41,7 @@ pub enum MachineStatus {
 }
 
 pub struct Machine {
-    mem_code: Vec<i32>,
-    mem_stack: Vec<i32>,
+    mem: Memory,
     status: MachineStatus,
     ncycles: usize,
     encoder: Encoder,
@@ -51,11 +53,11 @@ pub struct Machine {
 
 impl Machine {
     pub(crate) fn getpc(&self) -> i32 {
-        self.mem_stack[PC_ADDR as usize]
+        self.mem[addrs::PC]
     }
 
     pub(crate) fn getsp(&self) -> i32 {
-        self.mem_stack[SP_ADDR as usize]
+        self.mem[addrs::SP]
     }
 
     pub fn load(&mut self, addr: i32) -> Option<i32> {
@@ -73,11 +75,11 @@ impl Machine {
             self.set_error(MachineError::StackAccessBeyondSP { sp, addr });
             return false;
         }
-        if addr == SP_ADDR {
+        if addr == addrs::SP {
             self.set_error(MachineError::IllegalDirectWriteSP);
             return false;
         }
-        if addr == PC_ADDR {
+        if addr == addrs::PC {
             self.set_error(MachineError::IllegalDirectWritePC);
             return false;
         }
@@ -86,11 +88,11 @@ impl Machine {
     }
 
     fn stack_access_ok(&self, addr: i32) -> bool {
-        addr >= SEG_STACK_START && addr < SEG_STACK_END
+        segs::STACK.contains(addr)
     }
 
     fn code_access_ok(&self, addr: i32) -> bool {
-        addr >= SEG_CODE_START && addr < SEG_CODE_END
+        segs::CODE.contains(addr)
     }
 
     pub fn unsafe_store(&mut self, addr: i32, val: i32) {
@@ -98,7 +100,7 @@ impl Machine {
             self.set_error(StackAccessSegFault { addr });
             return;
         }
-        self.mem_stack[addr as usize] = val;
+        self.mem[addr] = val;
     }
 
     pub fn unsafe_load(&mut self, addr: i32) -> Option<i32> {
@@ -106,7 +108,7 @@ impl Machine {
             self.set_error(StackAccessSegFault { addr });
             return None;
         }
-        Some(self.mem_stack[addr as usize])
+        Some(self.mem[addr])
     }
 
     pub fn setpc(&mut self, newpc: i32) {
@@ -114,15 +116,15 @@ impl Machine {
             self.set_error(ImminentPCSegFault { newpc });
             return;
         }
-        self.unsafe_store(PC_ADDR, newpc);
+        self.unsafe_store(addrs::PC, newpc);
     }
 
     pub fn setsp(&mut self, newsp: i32) {
-        if newsp < SP_MIN {
+        if newsp < addrs::INIT_SP {
             self.set_error(IllegalSPReductionBelowMin { newsp });
             return;
         }
-        self.unsafe_store(SP_ADDR, newsp);
+        self.unsafe_store(addrs::SP, newsp);
     }
 
     pub fn print(&mut self, val: i32) {
@@ -149,7 +151,7 @@ impl Machine {
             let line = line.trim();
             let words = line.split(" ").collect::<Vec<_>>();
             let command = words[0];
-            let args: &[&str] = &words[1..];
+            let args = &words[1..];
             let int_args = args
                 .iter()
                 .filter_map(|s| util::parse_hex(s))
@@ -215,7 +217,7 @@ impl Machine {
 
     pub fn code_dump_around(&self, middle: i32, drange: Range<i32>) -> String {
         let mut range = (middle + drange.start)..(middle + drange.end);
-        util::clamp_range(&mut range, SEG_CODE_START..SEG_CODE_END);
+        segs::CODE.clamp_range(&mut range);
         self.code_dump(middle, range)
     }
 
@@ -262,7 +264,7 @@ impl Machine {
     }
 
     pub fn stack_mem_dump(&self, mut addr_range: Range<i32>) -> String {
-        util::clamp_range(&mut addr_range, SEG_STACK_START..SEG_STACK_END);
+        segs::STACK.clamp_range(&mut addr_range);
         let frame = self.debug_info.frame_name_for_inst
             .get(&self.getpc());
         let var_for_offset = match frame {
@@ -274,18 +276,18 @@ impl Machine {
                 .collect(),
             None => HashMap::new(),
         };
-        let fp = self.mem_stack[FP_ADDR as usize];
+        let fp = self.mem[addrs::FP];
         let extra_infos = addr_range.clone().map(
             |addr| {
                 vec![
                     match addr {
-                        PC_ADDR =>
+                        addrs::PC =>
                             " pc",
-                        SP_ADDR =>
+                        addrs::SP =>
                             " sp",
-                        FP_ADDR =>
+                        addrs::FP =>
                             " fp",
-                        BOUNDARY_ADDR =>
+                        addrs::BOUNDARY =>
                             " --",
                         _ =>
                             ""
@@ -295,12 +297,18 @@ impl Machine {
                         -1 => " saved fp".to_string(),
                         offset => {
                             match var_for_offset.get(&offset) {
-                                Some(var_name) => format!(" {:12}", var_name),
-                                None => " ".repeat(13),
+                                Some(var_name) =>
+                                    format!(" {:12}", var_name),
+                                None =>
+                                    " ".repeat(13),
                             }
                         }
                     },
-                    if addr == fp { " <======== FP".to_string() } else { " ".repeat(13) }
+                    if addr == fp {
+                        " <======== FP".to_string()
+                    } else {
+                        " ".repeat(13)
+                    }
                 ].join("")
             });
         addr_range
@@ -315,19 +323,14 @@ impl Machine {
         if !self.stack_access_ok(addr) {
             return None;
         }
-        let val = self.mem_stack[addr as usize];
+        let val = self.mem[addr];
         let ret = format!("{:04x}. {:8x} [{:8}]", addr, val, val);
         Some(ret)
     }
 
     pub fn new() -> Machine {
-        let mut mem_stack = vec![0; SEG_STACK_SIZE as usize];
-        for (i, x) in INIT_STACK.iter().enumerate() {
-            mem_stack[i] = *x;
-        }
         Machine {
-            mem_stack,
-            mem_code: vec![0; SEG_CODE_SIZE as usize],
+            mem: Memory::new(),
             status: Idle,
             ncycles: 0,
             encoder: Encoder::new(),
@@ -338,8 +341,9 @@ impl Machine {
     }
 
     pub fn copy_code(&mut self, code: &[i32]) {
-        for (i, inst) in code.iter().enumerate() {
-            self.mem_code[i] = *inst;
+        for (loc, bin_inst) in code.iter().enumerate() {
+            let addr = inst_loc_to_addr(loc);
+            self.mem[addr] = *bin_inst;
         }
     }
 
@@ -398,8 +402,7 @@ impl Machine {
         if !self.code_access_ok(addr) {
             return Err(CodeAccessSegFault { addr });
         }
-        let inst_loc = (addr - SEG_CODE_START) as usize;
-        let bin_inst = self.mem_code[inst_loc];
+        let bin_inst = self.mem[addr];
         match self.encoder.decode(bin_inst) {
             None => Err(CannotDecodeInst(bin_inst)),
             Some(inst) => Ok(Inst {

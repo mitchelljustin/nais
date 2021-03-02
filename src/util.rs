@@ -1,5 +1,4 @@
-use std::ops::Range;
-use std::cmp;
+use crate::mem::addrs;
 
 pub fn parse_hex(s: &str) -> Option<i32> {
     match i32::from_str_radix(s, 16) {
@@ -8,9 +7,9 @@ pub fn parse_hex(s: &str) -> Option<i32> {
     }
 }
 
-pub fn clamp_range<T: Ord + Copy>(range: &mut Range<T>, clamp: Range<T>) {
-    *range =
-        cmp::max(range.start, clamp.start)..cmp::min(range.end, clamp.end);
+
+pub fn inst_loc_to_addr(loc: usize) -> i32 {
+    loc as i32 + addrs::CODE_ENTRY
 }
 
 #[macro_export]

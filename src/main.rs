@@ -12,6 +12,7 @@ mod machine;
 mod isa;
 mod constants;
 mod util;
+mod mem;
 
 fn array_on_stack() -> Assembler {
     inline_assembler! {
@@ -83,7 +84,6 @@ fn array_on_stack() -> Assembler {
         arg array array_len;
         local index;
             start_frame;
-            ebreak;
 
             push 0;
             storef index;
