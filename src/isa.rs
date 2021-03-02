@@ -12,25 +12,25 @@ use crate::mem::addrs;
 pub fn push(m: &mut Machine, val: i32) {
     let sp = m.getsp();
     m.setsp(sp + 1);
-    m.store(sp, val);
+    m.stack_store(sp, val);
 }
 
 pub fn pop(m: &mut Machine) -> Option<i32> {
     let newsp = m.getsp() - 1;
-    let top = m.load(newsp);
+    let top = m.stack_load(newsp);
     m.setsp(newsp);
     top
 }
 
 pub fn loadi(m: &mut Machine, addr: i32) {
-    if let Some(val) = m.load(addr) {
+    if let Some(val) = m.stack_load(addr) {
         push(m, val);
     }
 }
 
 pub fn storei(m: &mut Machine, addr: i32) {
     if let Some(val) = pop(m) {
-        m.store(addr, val);
+        m.stack_store(addr, val);
     }
 }
 
@@ -41,7 +41,7 @@ pub fn addsp(m: &mut Machine, offset: i32) {
 
 pub fn load(m: &mut Machine, offset: i32) {
     if let Some(addr) = pop(m) {
-        if let Some(val) = m.load(addr + offset) {
+        if let Some(val) = m.stack_load(addr + offset) {
             push(m, val);
         }
     }
@@ -49,17 +49,17 @@ pub fn load(m: &mut Machine, offset: i32) {
 
 pub fn store(m: &mut Machine, offset: i32) {
     if let (Some(addr), Some(val)) = (pop(m), pop(m)) {
-        m.store(addr + offset, val);
+        m.stack_store(addr + offset, val);
     }
 }
 
 fn getfp(m: &mut Machine) -> i32 {
-    m.load(addrs::FP).expect("frame pointer invalid")
+    m.stack_load(addrs::FP).expect("frame pointer invalid")
 }
 
 pub fn loadf(m: &mut Machine, offset: i32) {
     let fp = getfp(m);
-    if let Some(val) = m.load(fp + offset) {
+    if let Some(val) = m.stack_load(fp + offset) {
         push(m, val);
     }
 }
@@ -67,7 +67,7 @@ pub fn loadf(m: &mut Machine, offset: i32) {
 pub fn storef(m: &mut Machine, offset: i32) {
     let fp = getfp(m);
     if let Some(val) = pop(m) {
-        m.store(fp + offset, val);
+        m.stack_store(fp + offset, val);
     }
 }
 

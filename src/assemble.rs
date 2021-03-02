@@ -9,74 +9,6 @@ use crate::isa;
 use crate::mem::addrs;
 use crate::util::inst_loc_to_addr;
 
-macro_rules! add_asm_line {
-    ( [$target:ident] label $label:ident ) => {
-        $target.add_top_level_label(stringify!($label));
-    };
-    ( [$target:ident] inner $label:ident ) => {
-        $target.add_inner_label(stringify!($label));
-    };
-    ( [$target:ident] global $name:ident $loc:literal ) => {
-        $target.add_global_var(stringify!($name), $loc);
-    };
-    ( [$target:ident] const $name:ident $value:literal ) => {
-        $target.add_constant(stringify!($name), $value);
-    };
-    ( [$target:ident] arg $($name:ident)+ ) => {
-        $(
-            $target.add_arg_var(stringify!($name));
-        )+
-    };
-    ( [$target:ident] local $($name:ident)+ ) => {
-        $(
-            $target.add_local_var(stringify!($name), 1);
-        )+
-    };
-    ( [$target:ident] array $name:ident $size:literal ) => {
-        $target.add_local_var(stringify!($name), $size);
-    };
-    ( [$target:ident] start_frame ) => {
-        $target.start_frame();
-    };
-    ( [$target:ident] end_frame ) => {
-        $target.end_frame();
-    };
-    ( [$target:ident] $mnem:ident $label:ident ) => {
-        $target.add_placeholder_inst(stringify!($mnem), stringify!($label));
-    };
-    ( [$target:ident] $mnem:ident ) => {
-        add_asm_line!([$target] $mnem 0);
-    };
-    ( [$target:ident] $mnem:ident $arg:literal ) => {
-        $target.add_inst(stringify!($mnem), $arg);
-    };
-}
-
-macro_rules! add_asm {
- ( [$target:ident] $( $mnem:ident $($label:ident)* $($a:literal)* );+; ) => {
-       $(
-            add_asm_line!([$target] $mnem $($label)* $($a)*);
-       )+
-    };
-}
-
-macro_rules! inline_assembler {
-    ( $( $mnem:ident $($label:ident)* $($a:literal)* );+; ) => {
-       {
-           let mut assem = Assembler::new();
-           assem.init();
-           add_asm! {
-                [assem]
-                $(
-                    $mnem $($label)* $($a)*;
-                )+
-           }
-           assem.finish();
-           assem
-       }
-    };
-}
-
 pub struct DebugInfo {
     pub call_frames: HashMap<String, CallFrame>,
     pub frame_name_for_inst: HashMap<i32, String>,
@@ -137,7 +69,7 @@ impl Display for LabelType {
 pub struct CallFrame {
     pub name: String,
     pub addr_range: Range<i32>,
-    pub frame_vars: HashMap<String, i32>,
+    pub local_labels: HashMap<String, i32>,
     pub inner_labels: HashMap<String, i32>,
     pub locals_size: i32,
     pub args_size: i32,
@@ -243,7 +175,7 @@ impl Assembler {
         self.call_frames.insert(name.to_string(), CallFrame {
             name: name.to_string(),
             addr_range: self.next_inst_addr()..-1,
-            frame_vars: HashMap::new(),
+            local_labels: HashMap::new(),
             inner_labels: HashMap::new(),
             locals_size: 0,
             args_size: 0,
@@ -277,28 +209,27 @@ impl Assembler {
         );
     }
 
-    pub fn add_local_var(&mut self, name: &str, sz: i32) {
+    pub fn add_local_var(&mut self, name: &str, size: i32) {
         let frame = self.cur_frame();
-        frame.frame_vars.insert(
+        frame.local_labels.insert(
             name.to_string(),
             frame.locals_size,
         );
-        frame.locals_size += sz;
-        if sz > 1 {
-            frame.frame_vars.insert(
-                format!("{}_len", name),
-                sz,
-            );
-        }
+        frame.locals_size += size;
     }
 
-    pub fn add_arg_var(&mut self, name: &str) {
+    pub fn add_local_const(&mut self, name: &str, val: i32) {
         let frame = self.cur_frame();
-        frame.frame_vars.insert(
+        frame.local_labels.insert(name.to_string(), val);
+    }
+
+    pub fn add_arg_var(&mut self, name: &str, size: i32) {
+        let frame = self.cur_frame();
+        frame.local_labels.insert(
             name.to_string(),
             -frame.args_size - 3, // [..args retaddr savedfp || locals ]
         );
-        frame.args_size += 1;
+        frame.args_size += size;
     }
 
     pub fn add_constant(&mut self, name: &str, value: i32) {
@@ -384,7 +315,7 @@ impl Assembler {
             });
         }
         // Local frame var
-        if let Some(&value) = frame.frame_vars.get(&target) {
+        if let Some(&value) = frame.local_labels.get(&target) {
             return Some(ResolvedLabel {
                 inst_addr,
                 target,

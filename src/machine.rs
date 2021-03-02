@@ -60,16 +60,24 @@ impl Machine {
         self.mem[addrs::SP]
     }
 
-    pub fn load(&mut self, addr: i32) -> Option<i32> {
+    pub fn stack_load(&mut self, addr: i32) -> Option<i32> {
         let sp = self.getsp();
         if addr >= sp {
             self.set_error(MachineError::StackAccessBeyondSP { sp, addr });
             return None;
         }
-        self.unsafe_load(addr)
+        if !self.stack_access_ok(addr) {
+            self.set_error(StackAccessSegFault { addr });
+            return None;
+        }
+        Some(self.unsafe_load(addr))
     }
 
-    pub fn store(&mut self, addr: i32, val: i32) -> bool {
+    pub fn stack_store(&mut self, addr: i32, val: i32) -> bool {
+        if !self.stack_access_ok(addr) {
+            self.set_error(StackAccessSegFault { addr });
+            return false;
+        }
         let sp = self.getsp();
         if addr >= sp {
             self.set_error(MachineError::StackAccessBeyondSP { sp, addr });
@@ -96,19 +104,11 @@ impl Machine {
     }
 
     pub fn unsafe_store(&mut self, addr: i32, val: i32) {
-        if !self.stack_access_ok(addr) {
-            self.set_error(StackAccessSegFault { addr });
-            return;
-        }
         self.mem[addr] = val;
     }
 
-    pub fn unsafe_load(&mut self, addr: i32) -> Option<i32> {
-        if !self.stack_access_ok(addr) {
-            self.set_error(StackAccessSegFault { addr });
-            return None;
-        }
-        Some(self.mem[addr])
+    pub fn unsafe_load(&mut self, addr: i32) -> i32 {
+        self.mem[addr]
     }
 
     pub fn setpc(&mut self, newpc: i32) {
@@ -271,7 +271,7 @@ impl Machine {
             Some(frame) => self.debug_info.call_frames
                 .get(frame)
                 .unwrap()
-                .frame_vars.iter()
+                .local_labels.iter()
                 .map(|(name, off)| (off, name))
                 .collect(),
             None => HashMap::new(),

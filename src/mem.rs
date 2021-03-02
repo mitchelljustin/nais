@@ -11,12 +11,12 @@ pub mod segs {
         pub addr_range: Range<i32>,
     }
     impl Segment {
-        pub fn len(&self) -> usize {
-            self.addr_range.len()
-        }
-
         pub const fn start(&self) -> i32 {
             self.addr_range.start
+        }
+
+        pub fn len(&self) -> usize {
+            self.addr_range.len()
         }
 
         pub fn contains(&self, addr: i32) -> bool {
@@ -61,14 +61,14 @@ pub(crate) mod addrs {
 
 
 pub struct Memory {
-    mem: Vec<i32>,
+    vec: Vec<i32>,
 }
 
 impl Memory {
     pub fn new() -> Memory {
         let total_len = segs::ALL.iter().map(|s| s.len()).sum();
         let mut mem = Memory {
-            mem: Vec::from_iter(iter::repeat(0).take(total_len)),
+            vec: Vec::from_iter(iter::repeat(0).take(total_len)),
         };
         // Initialize stack
         mem[addrs::PC]         = addrs::CODE_ENTRY;
@@ -83,12 +83,12 @@ impl Index<i32> for Memory {
     type Output = i32;
 
     fn index(&self, index: i32) -> &Self::Output {
-        &self.mem[index as usize]
+        &self.vec[index as usize]
     }
 }
 
 impl IndexMut<i32> for Memory {
     fn index_mut(&mut self, index: i32) -> &mut Self::Output {
-        &mut self.mem[index as usize]
+        &mut self.vec[index as usize]
     }
 }
