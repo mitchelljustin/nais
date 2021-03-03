@@ -10,10 +10,10 @@ use crate::assembler::{AssemblyResult, assemble_file};
 mod linker;
 mod machine;
 mod isa;
-mod constants;
 mod util;
 mod mem;
 mod assembler;
+mod encoder;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -35,7 +35,7 @@ fn main() {
     machine.max_cycles = 1_000_000_000;
 
     machine.enable_debugger = true;
-    machine.attach_debug_info(debug_info);
+    machine.debug_info = debug_info;
 
     machine.copy_code(&binary);
     machine.run();

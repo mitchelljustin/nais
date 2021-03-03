@@ -78,19 +78,7 @@ pub fn assemble_from_source<T: io::Read>(mut source: T) -> Result<AssemblyResult
     let mut assembler = Assembler::new();
     assembler.init();
     assembler.process(&text);
-    assembler.finish();
-    if !assembler.errors.is_empty() {
-        return Err(ParserErrors(assembler.errors));
-    }
-    let binary = match assembler.linker.link_binary() {
-        Ok(bin) => bin,
-        Err(errs) => return Err(LinkerErrors(errs)),
-    };
-    let debug_info = DebugInfo::from(assembler.linker);
-    Ok(AssemblyResult {
-        binary,
-        debug_info,
-    })
+    assembler.finish()
 }
 
 
@@ -111,10 +99,7 @@ impl Assembler {
 
     pub fn init(&mut self) {
         self.linker.init();
-        for (callcode, (_, call_name)) in isa::env_call::LIST.iter().enumerate() {
-            let const_name = format!("ecall.{}", call_name);
-            self.linker.add_constant(&const_name, callcode as i32);
-        }
+        self.add_ecall_codes();
     }
 
     pub fn process(&mut self, text: &str) {
@@ -126,8 +111,20 @@ impl Assembler {
         }
     }
 
-    pub fn finish(&mut self) {
+    pub fn finish(mut self) -> Result<AssemblyResult, AssemblyError> {
         self.linker.finish();
+        if !self.errors.is_empty() {
+            return Err(ParserErrors(self.errors));
+        }
+        let binary = match self.linker.link_binary() {
+            Ok(bin) => bin,
+            Err(errs) => return Err(LinkerErrors(errs)),
+        };
+        let debug_info = DebugInfo::from(self.linker);
+        Ok(AssemblyResult {
+            binary,
+            debug_info,
+        })
     }
 
     fn process_line(&mut self, line: &str) -> Result<(), ParserError> {
@@ -143,7 +140,7 @@ impl Assembler {
             if verb.starts_with("_") {
                 self.linker.add_inner_label(name);
             } else {
-                self.linker.add_top_level_label(name);
+                self.linker.add_subroutine_label(name);
             }
             return Ok(());
         }
@@ -151,12 +148,18 @@ impl Assembler {
         if verb.starts_with(".") {
             return self.process_macro(verb, args);
         }
+        self.process_inst(verb, args)
+    }
+
+
+    fn process_inst(&mut self, verb: &str, args: &[&str]) -> Result<(), ParserError> {
         match args {
             [] => {
                 self.linker.add_inst(verb, 0);
-            }
+                Ok(())
+            },
             [arg] => {
-                return match Assembler::parse_integer(arg) {
+                match Assembler::parse_integer(arg) {
                     Ok(arg) => {
                         self.linker.add_inst(verb, arg);
                         Ok(())
@@ -166,14 +169,13 @@ impl Assembler {
                         Ok(())
                     }
                     Err(err) => Err(err),
-                };
-            }
-            _ => return Err(InstHasMultipleArgs {
+                }
+            },
+            _ => Err(InstHasMultipleArgs {
                 verb: verb.to_string(),
                 args: args.into_iter().map(|s| s.to_string()).collect(),
             }),
         }
-        Ok(())
     }
 
     fn process_macro(&mut self, verb: &str, args: &[&str]) -> Result<(), ParserError> {
@@ -255,6 +257,13 @@ impl Assembler {
             unknown => return Err(UnknownMacro { verb: unknown.to_string() })
         }
         Ok(())
+    }
+
+    fn add_ecall_codes(&mut self) {
+        for (callcode, (_, call_name)) in isa::env_call::LIST.iter().enumerate() {
+            let const_name = format!("ecall.{}", call_name);
+            self.linker.add_constant(&const_name, callcode as i32);
+        }
     }
 
     fn parse_integer(arg: &str) -> Result<i32, ParserError> {

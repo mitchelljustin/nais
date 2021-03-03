@@ -3,10 +3,10 @@ use std::fmt::{Display, Formatter};
 use std::fmt;
 use std::ops::Range;
 
-use crate::linker::LinkerError::{MissingTarget, FrameRetvalAlreadyDefined};
-use crate::isa::{Encoder, Inst, OP_INVALID};
-use crate::mem::addrs;
-use crate::util::inst_loc_to_addr;
+use crate::encoder::Encoder;
+use crate::isa::{Inst, OP_INVALID};
+use crate::linker::LinkerError::{FrameRetvalAlreadyDefined, MissingTarget};
+use crate::mem::{addrs, inst_loc_to_addr};
 
 #[derive(Clone)]
 pub struct DebugInfo {
@@ -39,7 +39,7 @@ impl From<Linker> for DebugInfo {
 pub enum LabelType {
     Constant,
     GlobalVar,
-    TopLevel,
+    Subroutine,
     InnerLabel,
     FrameVar,
 }
@@ -57,7 +57,7 @@ impl Display for LabelType {
         f.write_str(match self {
             LabelType::Constant =>      "const",
             LabelType::GlobalVar =>     "glob",
-            LabelType::TopLevel =>      "sub",
+            LabelType::Subroutine =>    "sub",
             LabelType::InnerLabel =>    "inner",
             LabelType::FrameVar =>      "var",
         })
@@ -167,18 +167,19 @@ impl Linker {
         self.add_inst(opname, 0);
     }
 
-    pub fn add_top_level_label(&mut self, name: &str) {
+    pub fn add_subroutine_label(&mut self, name: &str) {
+        let next_addr = self.next_inst_addr();
         if self.cur_frame_name != "" {
-            self.cur_frame().addr_range.end = self.next_inst_addr();
+            self.cur_frame().addr_range.end = next_addr;
         }
         self.call_frames.insert(name.to_string(), CallFrame {
             name: name.to_string(),
-            addr_range: self.next_inst_addr()..-1,
+            addr_range: next_addr..-1,
             frame_labels: HashMap::new(),
             inner_labels: HashMap::new(),
             retval_name: None,
             locals_size: 0,
-            args_size: 0, // retval always included
+            args_size: 0,
         });
         self.cur_frame_name = name.to_string();
     }
@@ -196,7 +197,7 @@ impl Linker {
             None => {
                 const DEFAULT_ENTRY_LABEL: &str = "_entry";
                 self.errors.push(LinkerError::NeedToDefineEntryLabel);
-                self.add_top_level_label(DEFAULT_ENTRY_LABEL);
+                self.add_subroutine_label(DEFAULT_ENTRY_LABEL);
                 self.call_frames.get_mut(DEFAULT_ENTRY_LABEL).unwrap()
             }
         }
@@ -293,7 +294,7 @@ impl Linker {
                 inst_addr,
                 target,
                 value,
-                label_type: LabelType::TopLevel,
+                label_type: LabelType::Subroutine,
             });
         }
         // Global variable

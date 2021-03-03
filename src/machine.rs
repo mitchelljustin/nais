@@ -7,13 +7,11 @@ use std::ops::Range;
 use MachineError::*;
 use MachineStatus::*;
 
+use crate::encoder::Encoder;
+use crate::isa::Inst;
 use crate::linker::{DebugInfo, ResolvedLabel};
-use crate::constants::DEFAULT_MAX_CYCLES;
-use crate::isa::{Encoder, Inst};
-use crate::mem::{addrs, segs};
-use crate::mem::Memory;
+use crate::mem::{addrs, segs, inst_loc_to_addr, Memory};
 use crate::util;
-use crate::util::inst_loc_to_addr;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum MachineError {
@@ -48,8 +46,8 @@ pub struct Machine {
     status: MachineStatus,
     ncycles: usize,
     encoder: Encoder,
-    debug_info: DebugInfo,
 
+    pub debug_info: DebugInfo,
     pub max_cycles: usize,
     pub enable_debugger: bool,
 }
@@ -193,20 +191,13 @@ impl Machine {
                         [mid] =>
                             println!("{}", self.stack_mem_dump((mid - 4)..(mid + 4))),
                         [] =>
-                            println!("{}", self.stack_dump()),
+                            println!("{}", self.stack_dump_all()),
                         _ =>
                             println!("format: ps [addr] [range]"),
                     }
                 }
                 "pm" => {
                     println!("{:?}", self);
-                }
-                "s" | "store" => {
-                    if let [addr, val] = int_args[..] {
-                        self.unsafe_store(addr, val);
-                    } else {
-                        println!("format: s addr val");
-                    }
                 }
                 "x" | "exit" => {
                     self.set_status(Stopped);
@@ -273,7 +264,7 @@ impl Machine {
         self.stack_mem_dump((sp - offset)..sp)
     }
 
-    pub fn stack_dump(&self) -> String {
+    pub fn stack_dump_all(&self) -> String {
         self.stack_mem_dump(0..self.getsp())
     }
 
@@ -286,13 +277,7 @@ impl Machine {
                 .get(frame)
                 .unwrap()
                 .frame_labels.iter()
-                .filter_map(|(name, off)| {
-                    if name.ends_with(".len") { // meta-label
-                        None
-                    } else {
-                        Some((off, name))
-                    }
-                })
+                .map(|(name, off)| (off, name) )
                 .collect(),
             None => HashMap::new(),
         };
@@ -332,7 +317,7 @@ impl Machine {
                 ].join("")
             });
         addr_range
-            .filter_map(|addr| self.formatted_stack_val(addr))
+            .map(|addr| self.formatted_stack_val(addr).unwrap())
             .zip(extra_infos)
             .map(|(desc, extra_info)| desc + &extra_info)
             .collect::<Vec<_>>()
@@ -344,19 +329,18 @@ impl Machine {
             return None;
         }
         let val = self.mem[addr];
-        let ret = format!("{:04x}. {:8x} [{:8}]", addr, val, val);
-        Some(ret)
+        Some(format!("{:04x}. {:8x} [{:8}]", addr, val, val))
     }
 
     pub fn new() -> Machine {
         Machine {
             mem: Memory::new(),
-            status: Idle,
-            ncycles: 0,
             encoder: Encoder::new(),
             debug_info: DebugInfo::new(),
+            status: Idle,
+            ncycles: 0,
             enable_debugger: true,
-            max_cycles: DEFAULT_MAX_CYCLES,
+            max_cycles: 1_000_000,
         }
     }
 
@@ -365,10 +349,6 @@ impl Machine {
             let addr = inst_loc_to_addr(loc);
             self.mem[addr] = *bin_inst;
         }
-    }
-
-    pub fn attach_debug_info(&mut self, debug_info: DebugInfo) {
-        self.debug_info = debug_info;
     }
 
     pub fn set_status(&mut self, status: MachineStatus) {
