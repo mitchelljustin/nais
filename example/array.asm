@@ -1,4 +1,5 @@
 .define stdout 1
+.define start_val 16
 
 entry:
     .local_array ints 20
@@ -32,7 +33,7 @@ fill_array:
     push 0
     storef index
 
-    push 0
+    push start_val
     storef val
 
     _loop:
@@ -59,9 +60,9 @@ fill_array:
 
 print_ints:
     .args ints ints.len
-    .local_array out 2
+    .local_array out 9 ; 8 hex chars + 1 newline
     .local_addrs out
-    .locals index int
+    .locals index int hex_len
     .start_frame
 
     push 0
@@ -74,20 +75,23 @@ print_ints:
         load ; *(&ints + index)
         storef int
 
+        loadf out.addr
         loadf int
         push
-        jal int_to_hex_char
-        storef out
-        addsp -1
+        jal int_to_hex
+        storef hex_len
+        addsp -2
 
         push 0x0a ; newline
-        push out
-        addi 1
         loadi fp
+        push out
+        add
+        loadf hex_len
         add
         store
 
-        push out.len
+        loadf hex_len
+        addi 1 ; for the newline
         loadf out.addr
         push stdout
         ecall callcode.write
@@ -105,28 +109,43 @@ print_ints:
     ret
 
 int_to_hex:
-    .args int buf
-    .locals index char
+    .args int buf ; buf must be at least len 8
+    .locals char
+    .return nchars
 
     .start_frame
+
     push 0
-    storef index
+    storef nchars
 
     _loop:
         loadf int
+        andi 0xf
         push
         jal int_to_hex_char
         storef char
+        addsp -1
 
         loadf char
         loadf buf
         store
 
+        loadf nchars
+        addi 1
+        storef nchars
+        loadf int
+        shr 4
+        storef int
+
         loadf buf
         addi 1
         storef buf
 
+        push 0
+        loadf int
+        bne _loop
 
+_end:
     .end_frame
     ret
 
@@ -169,3 +188,13 @@ int_to_hex_char:
     _end:
         .end_frame
         ret
+
+reverse_array:
+    .args arr arr.len
+    .locals a b
+    .start_frame
+
+
+
+    .end_frame
+    ret

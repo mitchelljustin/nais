@@ -4,17 +4,16 @@ use std::{env, process};
 
 use machine::*;
 
-use crate::assembler::DebugInfo;
-use crate::parse_asm::load_asm_file;
+use crate::assembler::{AssemblyResult, assemble_file};
 
 #[macro_use]
-mod assembler;
+mod linker;
 mod machine;
 mod isa;
 mod constants;
 mod util;
 mod mem;
-mod parse_asm;
+mod assembler;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -25,25 +24,17 @@ fn main() {
             process::exit(1);
         }
     };
-    let mut assembler = match load_asm_file(&filename) {
+    let AssemblyResult { binary, debug_info } = match assemble_file(&filename) {
         Err(e) => {
-            panic!("Error parsing ASM file: \n{}\n", e);
-        },
-        Ok(assem) => assem,
-    };
-    let binary = {
-        match assembler.assemble() {
-            Err(errors) => {
-                panic!("Errors assembling program: \n{}\n", util::dump_errors(&errors));
-            }
-            Ok(bin) => bin
+            panic!("Error assembling file: \n{}\n", e);
         }
+        Ok(res) => res,
     };
     let mut machine = Machine::new();
     machine.max_cycles = 1_000_000_000;
 
     machine.enable_debugger = true;
-    machine.attach_debug_info(DebugInfo::from(assembler));
+    machine.attach_debug_info(debug_info);
 
     machine.copy_code(&binary);
     machine.run();

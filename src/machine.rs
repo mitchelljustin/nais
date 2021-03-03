@@ -7,7 +7,7 @@ use std::ops::Range;
 use MachineError::*;
 use MachineStatus::*;
 
-use crate::assembler::{DebugInfo, ResolvedLabel};
+use crate::linker::{DebugInfo, ResolvedLabel};
 use crate::constants::DEFAULT_MAX_CYCLES;
 use crate::isa::{Encoder, Inst};
 use crate::mem::{addrs, segs};

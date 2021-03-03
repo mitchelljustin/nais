@@ -267,19 +267,19 @@ pub fn sar(m: &mut Machine, shamt: i32) {
 }
 
 macro_rules! logical_shift_funcs {
-        ( $($name:ident ($shop:tt));+; ) => {
-            $(
-                pub fn $name(m: &mut Machine, shamt: i32) {
-                    if let Some(top) = pop(m) {
-                        let top = top as u32;
-                        let top = (top $shop shamt);
-                        let top = top as i32;
-                        push(m, top);
-                    }
+    ( $($name:ident ($shop:tt));+; ) => {
+        $(
+            pub fn $name(m: &mut Machine, shamt: i32) {
+                if let Some(top) = pop(m) {
+                    let top1 = top as u32;
+                    let top2 = (top1 $shop shamt);
+                    let top3 = top2 as i32;
+                    push(m, top3);
                 }
-            )+
-        };
-    }
+            }
+        )+
+    };
+}
 
 logical_shift_funcs! {
     shl ( << );

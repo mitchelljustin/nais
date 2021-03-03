@@ -1,401 +1,300 @@
-use std::collections::HashMap;
-use std::fmt::{Display, Formatter};
-use std::fmt;
-use std::ops::Range;
+use std::{fmt, fs};
+use std::fmt::Formatter;
+use std::io;
+use std::num::ParseIntError;
+use std::ops::RangeInclusive;
 
-use crate::assembler::AssemblyError::{MissingTarget, FrameRetvalAlreadyDefined};
-use crate::isa::{Encoder, Inst, OP_INVALID};
-use crate::mem::addrs;
-use crate::util::inst_loc_to_addr;
+use AssemblyError::*;
+use ParserError::*;
 
-pub struct DebugInfo {
-    pub call_frames: HashMap<String, CallFrame>,
-    pub frame_name_for_inst: HashMap<i32, String>,
-    pub resolved_labels: HashMap<i32, ResolvedLabel>,
-}
+use crate::isa;
+use crate::linker::{DebugInfo, Linker, LinkerError};
 
-impl DebugInfo {
-    pub fn new() -> DebugInfo {
-        DebugInfo {
-            call_frames: HashMap::new(),
-            frame_name_for_inst: HashMap::new(),
-            resolved_labels: HashMap::new(),
-        }
-    }
-}
-
-impl From<Assembler> for DebugInfo {
-    fn from(p: Assembler) -> Self {
-        let mut info = DebugInfo::new();
-        info.resolved_labels = p.resolved_labels.clone();
-        info.call_frames = p.call_frames.clone();
-        info.frame_name_for_inst = p.frame_name_for_inst.clone();
-        info
-    }
-}
-
-#[derive(Copy, Clone)]
-pub enum LabelType {
-    Constant,
-    GlobalVar,
-    TopLevel,
-    InnerLabel,
-    FrameVar,
-}
-
-#[derive(Clone)]
-pub struct ResolvedLabel {
-    pub inst_addr: i32,
-    pub target: String,
-    pub value: i32,
-    pub label_type: LabelType,
-}
-
-impl Display for LabelType {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            LabelType::Constant =>      "const",
-            LabelType::GlobalVar =>     "glob",
-            LabelType::TopLevel =>      "sub",
-            LabelType::InnerLabel =>    "inner",
-            LabelType::FrameVar =>      "var",
-        })
-    }
-}
-
-
-#[derive(Clone)]
-pub struct CallFrame {
-    pub name: String,
-    pub addr_range: Range<i32>,
-    pub frame_labels: HashMap<String, i32>,
-    pub inner_labels: HashMap<String, i32>,
-    pub retval_name: Option<String>,
-    pub locals_size: i32,
-    pub args_size: i32,
-}
-
-#[derive(Clone, Debug)]
 pub enum AssemblyError {
-    NeedToDefineEntryLabel,
-    MissingTarget(Inst, String),
-    NoSuchOp(i32, String),
-    FrameRetvalAlreadyDefined { existing: String, new: String },
+    IOError(io::Error),
+    ParserErrors(Vec<(usize, ParserError)>),
+    LinkerErrors(Vec<LinkerError>),
 }
 
-impl Display for AssemblyError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+impl fmt::Display for AssemblyError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            MissingTarget(inst, target) => {
-                write!(f, "MissingTarget({} \"{}\")", inst, target)
+            IOError(e) => e.fmt(f),
+            LinkerErrors(errors) => {
+                for (index, err) in errors.into_iter().enumerate() {
+                    if let Err(e) = write!(f, "{}. {}", index, err) {
+                        return Err(e);
+                    }
+                }
+                Ok(())
             }
-            other => write!(f, "{:?}", other)
+            ParserErrors(errors) => {
+                for (loc, err) in errors.into_iter() {
+                    if let Err(e) = write!(f, "Line {}: {}", loc, err) {
+                        return Err(e);
+                    }
+                }
+                Ok(())
+            }
         }
     }
 }
 
+#[derive(Debug)]
+pub enum ParserError {
+    UnknownMacro { verb: String },
+    WrongNumberOfArguments { verb: String, expected: RangeInclusive<usize>, actual: usize },
+    InvalidIntegerArg(ParseIntError),
+    OnlyAsciiCharsSupported { char: String },
+    InstHasMultipleArgs { verb: String, args: Vec<String> },
 
-pub struct Assembler {
-    instructions: Vec<Inst>,
-    call_frames: HashMap<String, CallFrame>,
-    frame_name_for_inst: HashMap<i32, String>,
-    cur_frame_name: String,
-    global_vars: HashMap<String, i32>,
-    constants: HashMap<String, i32>,
-    reloc_tab: HashMap<usize, String>,
-    resolved_labels: HashMap<i32, ResolvedLabel>,
-    encoder: Encoder,
-    errors: Vec<AssemblyError>,
+    _NotAnIntegerArg,
 }
 
-impl Assembler {
-    pub fn new() -> Assembler {
-        Assembler {
-            instructions: Vec::new(),
-            call_frames: HashMap::new(),
-            global_vars: HashMap::new(),
-            constants: HashMap::new(),
-            frame_name_for_inst: HashMap::new(),
-            reloc_tab: HashMap::new(),
-            resolved_labels: HashMap::new(),
-            cur_frame_name: String::new(),
-            encoder: Encoder::new(),
+pub struct AssemblyResult {
+    pub binary: Vec<i32>,
+    pub debug_info: DebugInfo,
+}
+
+impl fmt::Display for ParserError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+pub fn assemble_file(filename: &str) -> Result<AssemblyResult, AssemblyError> {
+    match fs::File::open(filename) {
+        Ok(f) => assemble_from_source(f),
+        Err(err) => Err(IOError(err)),
+    }
+}
+
+pub fn assemble_from_source<T: io::Read>(mut source: T) -> Result<AssemblyResult, AssemblyError> {
+    let mut text = String::new();
+    match source.read_to_string(&mut text) {
+        Ok(_) => {}
+        Err(err) => return Err(IOError(err)),
+    };
+    let mut parser = Parser::new();
+    parser.init();
+    parser.process(text);
+    parser.finish();
+    if !parser.errors.is_empty() {
+        return Err(ParserErrors(parser.errors));
+    }
+    let binary = match parser.linker.link_binary() {
+        Ok(bin) => bin,
+        Err(errs) => return Err(LinkerErrors(errs)),
+    };
+    let debug_info = DebugInfo::from(parser.linker);
+    Ok(AssemblyResult {
+        binary, debug_info,
+    })
+}
+
+
+struct Parser {
+    pub errors: Vec<(usize, ParserError)>,
+    pub linker: Linker,
+
+    local_addrs: Vec<String>,
+}
+
+impl Parser {
+    pub fn new() -> Parser {
+        Parser {
+            linker: Linker::new(),
             errors: Vec::new(),
+            local_addrs: Vec::new(),
         }
     }
 
     pub fn init(&mut self) {
-        self.add_global_var("pc", addrs::PC);
-        self.add_global_var("sp", addrs::SP);
-        self.add_global_var("fp", addrs::FP);
+        self.linker.init();
+        for (callcode, (_, call_name)) in isa::env_call::LIST.iter().enumerate() {
+            let const_name = format!("callcode.{}", call_name);
+            self.linker.add_constant(&const_name, callcode as i32);
+        }
     }
 
-    pub fn add_inst(&mut self, opname: &str, arg: i32) {
-        let addr = self.next_inst_addr();
-        self.frame_name_for_inst.insert(addr, self.cur_frame_name.clone());
-        match self.encoder.make_inst(opname, arg) {
-            Some(inst) => {
-                self.instructions.push(Inst {
-                    addr: Some(addr),
-                    ..inst
-                });
+    pub fn process(&mut self, text: String) {
+        for (line_no, line) in text.lines().enumerate() {
+            match self.process_asm_line(line) {
+                Err(e) => self.errors.push((line_no, e)),
+                _ => {}
             }
-            None => {
-                self.errors.push(AssemblyError::NoSuchOp(
-                    addr, opname.to_string()));
-                self.instructions.push(Inst {
-                    opcode: 0x00,
-                    op: OP_INVALID,
-                    addr: Some(addr),
-                    arg,
-                });
-            }
-        };
-    }
-
-    fn next_inst_loc(&self) -> usize {
-        self.instructions.len()
-    }
-
-    fn next_inst_addr(&self) -> i32 {
-        inst_loc_to_addr(self.next_inst_loc())
-    }
-
-    pub fn add_placeholder_inst(&mut self, opname: &str, label: &str) {
-        self.reloc_tab.insert(self.next_inst_loc(), label.to_string());
-        self.add_inst(opname, 0);
-    }
-
-    pub fn add_top_level_label(&mut self, name: &str) {
-        if self.cur_frame_name != "" {
-            self.cur_frame().addr_range.end = self.next_inst_addr();
-        }
-        self.call_frames.insert(name.to_string(), CallFrame {
-            name: name.to_string(),
-            addr_range: self.next_inst_addr()..-1,
-            frame_labels: HashMap::new(),
-            inner_labels: HashMap::new(),
-            retval_name: None,
-            locals_size: 0,
-            args_size: 0, // retval always included
-        });
-        self.cur_frame_name = name.to_string();
-    }
-
-    pub fn add_inner_label(&mut self, name: &str) {
-        let addr = self.next_inst_addr();
-        self.cur_frame().inner_labels.insert(name.to_string(), addr);
-    }
-
-    fn cur_frame(&mut self) -> &mut CallFrame {
-        match self.call_frames.get(&self.cur_frame_name) {
-            Some(_) => {
-                self.call_frames.get_mut(&self.cur_frame_name).unwrap()
-            },
-            None => {
-                const DEFAULT_ENTRY_LABEL: &str = "_entry";
-                self.errors.push(AssemblyError::NeedToDefineEntryLabel);
-                self.add_top_level_label(DEFAULT_ENTRY_LABEL);
-                self.call_frames.get_mut(DEFAULT_ENTRY_LABEL).unwrap()
-            }
-        }
-    }
-
-    pub fn add_global_var(&mut self, name: &str, abs_loc: i32) {
-        self.global_vars.insert(
-            String::from(name),
-            abs_loc,
-        );
-    }
-
-    pub fn add_local_var(&mut self, name: &str, size: i32) {
-        let frame = self.cur_frame();
-        frame.frame_labels.insert(
-            name.to_string(),
-            frame.locals_size,
-        );
-        frame.locals_size += size;
-    }
-
-    pub fn add_local_const(&mut self, name: &str, val: i32) {
-        let frame = self.cur_frame();
-        frame.frame_labels.insert(name.to_string(), val);
-    }
-
-    pub fn add_arg_var(&mut self, name: &str, size: i32) {
-        let frame = self.cur_frame();
-        frame.frame_labels.insert(
-            name.to_string(),
-            -frame.args_size - 4, // [..args retval retaddr savedfp || locals ]
-        );
-        frame.args_size += size;
-    }
-
-    pub fn set_retval_name(&mut self, name: &str) {
-        let frame = self.cur_frame();
-        if let Some(existing) = &frame.retval_name {
-            let existing = existing.clone();
-            self.errors.push(FrameRetvalAlreadyDefined {
-                existing,
-                new: name.to_string(),
-            });
-            return;
-        }
-        frame.frame_labels.insert(name.to_string(), -3);
-        frame.retval_name = Some(name.to_string());
-    }
-
-    pub fn add_constant(&mut self, name: &str, value: i32) {
-        self.constants.insert(String::from(name), value);
-    }
-
-    pub fn alloc_locals(&mut self) {
-        let extend_sz = self.cur_frame().locals_size;
-        if extend_sz > 0 {
-            self.add_inst("addsp", extend_sz);
-        }
-    }
-
-    pub fn free_locals(&mut self) {
-        let drop_sz = self.cur_frame().locals_size;
-        if drop_sz > 0 {
-            self.add_inst("addsp", -drop_sz);
         }
     }
 
     pub fn finish(&mut self) {
-        self.cur_frame().addr_range.end = self.next_inst_addr();
+        self.linker.finish();
     }
 
-    fn resolve_label(&self, inst_loc: usize, target: &str) -> Option<ResolvedLabel> {
-        let inst_addr = inst_loc_to_addr(inst_loc);
-        if let Some(entry) = self.resolved_labels.get(&inst_addr) {
-            return Some(entry.clone());
+    fn process_asm_line(&mut self, line: &str) -> Result<(), ParserError> {
+        let line = line.to_string();
+        let line = line.split(";").next().unwrap(); // Remove comments
+        let words: Vec<&str> = line.split_ascii_whitespace().collect();
+        if words.len() == 0 {
+            return Ok(());
         }
-        // Constant
-        let target = target.to_string();
-        if let Some(&value) = self.constants.get(&target) {
-            return Some(ResolvedLabel {
-                inst_addr,
-                target,
-                value,
-                label_type: LabelType::Constant,
-            });
+        let verb = words[0];
+        if verb.ends_with(":") {
+            let name = &verb[..verb.len() - 1];
+            if verb.starts_with("_") {
+                self.linker.add_inner_label(name);
+            } else {
+                self.linker.add_top_level_label(name);
+            }
+            return Ok(());
         }
-        // Top level label
-        if let Some(label_entry) = self.call_frames.get(&target) {
-            let value = Assembler::calc_inst_offset(
-                label_entry.addr_range.start,
-                inst_addr,
-            );
-            return Some(ResolvedLabel {
-                inst_addr,
-                target,
-                value,
-                label_type: LabelType::TopLevel,
-            });
+        let args = &words[1..];
+        if verb.starts_with(".") {
+            return self.process_macro(verb, args);
         }
-        // Global variable
-        if let Some(&value) = self.global_vars.get(&target) {
-            return Some(ResolvedLabel {
-                inst_addr,
-                target,
-                value,
-                label_type: LabelType::GlobalVar,
-            });
-        }
-        // Local frame
-        let frame_name = match self.frame_name_for_inst.get(&inst_addr) {
-            None => {
-                panic!();
+        match args {
+            [] => {
+                self.linker.add_inst(verb, 0);
             },
-            Some(x) => x,
-        };
-        let frame = match self.call_frames.get(frame_name) {
-            None => return None,
-            Some(f) => f,
-        };
-        // Local code (inner label)
-        if let Some(&addr) = frame.inner_labels.get(&target) {
-            let value = Assembler::calc_inst_offset(
-                addr,
-                inst_addr,
-            );
-            return Some(ResolvedLabel {
-                inst_addr,
-                target,
-                value,
-                label_type: LabelType::InnerLabel,
-            });
+            [arg] => {
+                return match Parser::parse_integer(arg) {
+                    Ok(arg) => {
+                        self.linker.add_inst(verb, arg);
+                        Ok(())
+                    }
+                    Err(_NotAnIntegerArg) => {
+                        self.linker.add_placeholder_inst(verb, arg);
+                        Ok(())
+                    }
+                    Err(err) => Err(err),
+                };
+            }
+            _ => return Err(InstHasMultipleArgs {
+                verb: verb.to_string(),
+                args: args.into_iter().map(|s| s.to_string()).collect(),
+            }),
         }
-        // Local frame var
-        if let Some(&value) = frame.frame_labels.get(&target) {
-            return Some(ResolvedLabel {
-                inst_addr,
-                target,
-                value,
-                label_type: LabelType::FrameVar,
-            });
-        }
-        None
+        Ok(())
     }
 
-    pub fn relocate(&mut self) -> Vec<(usize, String)> {
-        let mut unrelocated = Vec::<(usize, String)>::new();
-        let mut inst_updates = Vec::<(usize, i32)>::new();
-        for (inst_loc, target) in self.reloc_tab.iter() {
-            let inst_loc = *inst_loc;
-            let inst_addr = inst_loc_to_addr(inst_loc);
-            match self.resolve_label(inst_loc, target) {
-                Some(resolved) => {
-                    inst_updates.push((inst_loc, resolved.value));
-                    self.resolved_labels.insert(inst_addr, resolved);
+    fn process_macro(&mut self, verb: &str, args: &[&str]) -> Result<(), ParserError> {
+        match verb {
+            ".args" => {
+                if let Some(err) = Parser::expect_num_args(verb, args, 1..=10) {
+                    return Err(err);
                 }
-                None => {
-                    unrelocated.push((inst_loc, target.clone()));
+                for arg_name in args {
+                    self.linker.add_arg_var(arg_name, 1);
                 }
             }
+            ".locals" => {
+                if let Some(err) = Parser::expect_num_args(verb, args, 1..=10) {
+                    return Err(err);
+                }
+                for name in args {
+                    self.linker.add_local_var(name, 1);
+                    self.linker.add_local_const(&Parser::len_name(name), 1);
+                }
+            }
+            ".local_addrs" => {
+                if let Some(err) = Parser::expect_num_args(verb, args, 1..=10) {
+                    return Err(err);
+                }
+                for name in args {
+                    self.linker.add_local_var(&Parser::addr_name(name), 1);
+                    self.local_addrs.push(name.to_string());
+                }
+            }
+            ".local_array" => {
+                if let Some(err) = Parser::expect_num_args(verb, args, 2..=2) {
+                    return Err(err);
+                }
+                let name = args[0];
+                let len = match i32::from_str_radix(args[1], 10) {
+                    Ok(len) => len,
+                    Err(err) => return Err(InvalidIntegerArg(err)),
+                };
+                self.linker.add_local_var(name, len);
+                self.linker.add_local_const(&Parser::len_name(name), len);
+            }
+            ".return" => {
+                if let Some(err) = Parser::expect_num_args(verb, args, 1..=1) {
+                    return Err(err);
+                }
+                self.linker.set_retval_name(args[0]);
+            }
+            ".start_frame" => {
+                self.linker.add_placeholder_inst("loadi", "fp");
+
+                self.linker.add_placeholder_inst("loadi", "sp");
+                self.linker.add_placeholder_inst("storei", "fp");
+
+                self.linker.alloc_locals();
+
+                for name in self.local_addrs.drain(..) {
+                    self.linker.add_placeholder_inst("loadi", "fp");
+                    self.linker.add_placeholder_inst("addi", &name);
+                    self.linker.add_placeholder_inst("storef", &Parser::addr_name(&name));
+                }
+            }
+            ".end_frame" => {
+                self.linker.free_locals();
+
+                self.linker.add_placeholder_inst("storei", "fp");
+            }
+            ".define" => {
+                if let Some(err) = Parser::expect_num_args(verb, args, 2..=2) {
+                    return Err(err);
+                }
+                let name = args[0];
+                let value = match Parser::parse_integer(args[1]) {
+                    Ok(value) => value,
+                    Err(err) => return Err(err),
+                };
+                self.linker.add_constant(name, value);
+            }
+            unknown => return Err(UnknownMacro { verb: unknown.to_string() })
         }
-        for (loc, arg) in inst_updates.into_iter() {
-            self.instructions[loc].arg = arg;
-        }
-        unrelocated
+        Ok(())
     }
 
-    pub fn assemble(&mut self) -> Result<Vec<i32>, Vec<AssemblyError>> {
-        let mut errors: Vec<AssemblyError> = self.errors
-            .drain(..)
-            .collect();
-
-        let unrelocated = self.relocate();
-        errors.extend(
-            unrelocated.into_iter()
-                .map(|(loc, target)|
-                    MissingTarget(self.instructions[loc], target.clone()))
-        );
-        if !errors.is_empty() {
-            return Err(errors);
+    fn parse_integer(arg: &str) -> Result<i32, ParserError> {
+        if arg.starts_with("0x") {
+            return match i32::from_str_radix(&arg[2..], 16) {
+                Ok(arg) => Ok(arg),
+                Err(err) => Err(InvalidIntegerArg(err)),
+            };
         }
-        let bin = self.instructions.iter()
-            .map(|inst| self.encoder.encode(inst))
-            .collect();
-        Ok(bin)
+        if let Ok(arg) = i32::from_str_radix(arg, 10) {
+            return Ok(arg);
+        }
+        if arg.len() == 3 && arg.starts_with("'") && arg.ends_with("'") {
+            let char = &arg[1..2];
+            if !char.is_ascii() {
+                return Err(OnlyAsciiCharsSupported { char: char.to_string() });
+            }
+            return Ok(char.bytes().next().unwrap() as i32);
+        }
+        Err(_NotAnIntegerArg)
     }
 
-    fn calc_inst_offset(target_addr: i32, inst_addr: i32) -> i32 {
-        target_addr - inst_addr - 1
+    fn expect_num_args(verb: &str, args: &[&str], expected: RangeInclusive<usize>) -> Option<ParserError> {
+        if !expected.contains(&args.len()) {
+            Some(WrongNumberOfArguments {
+                expected,
+                actual: args.len(),
+                verb: verb.to_string(),
+            })
+        } else {
+            None
+        }
+    }
+
+    fn len_name(local_name: &str) -> String {
+        format!("{}.len", local_name)
+    }
+
+    fn addr_name(local_name: &str) -> String {
+        format!("{}.addr", local_name)
     }
 }
-
-impl Display for Assembler {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.instructions
-            .iter()
-            .map(|inst| inst.to_string())
-            .collect::<Vec<_>>()
-            .join("\n")
-        )
-    }
-}
-
 
