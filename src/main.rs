@@ -18,7 +18,7 @@ mod assembler;
 fn main() {
     let args: Vec<String> = env::args().collect();
     let filename = match args.get(1) {
-        Some(filename) => filename.clone(),
+        Some(filename) => filename,
         None => {
             eprintln!("format: {} filename", args[0]);
             process::exit(1);
@@ -26,7 +26,8 @@ fn main() {
     };
     let AssemblyResult { binary, debug_info } = match assemble_file(&filename) {
         Err(e) => {
-            panic!("Error assembling file: \n{}\n", e);
+            eprintln!("Error assembling file: \n{}\n", e);
+            process::exit(1);
         }
         Ok(res) => res,
     };
@@ -38,5 +39,4 @@ fn main() {
 
     machine.copy_code(&binary);
     machine.run();
-    println!("{:?}", machine);
 }

@@ -1,6 +1,8 @@
+.define start_val 0xf000
+.define increment 0x0020
+
+
 .define stdout 1
-.define start_val 16
-.define increment 33
 
 entry:
     .local_array ints 20
@@ -215,26 +217,25 @@ _loop:
 
     loadf arr.addr
     loadf i
-    loadf max
+    loadf arr_len
+    subi 1
     sub
     add
     load
 
-    ; TOP = arr[max - i], temp = arr[i]
     loadf arr.addr
     loadf i
     add
-    ; TOP = arr + i
-    store
+    store ; arr[i] = TOP
 
-    ; temp = arr[i]
     loadf temp
     loadf arr.addr
     loadf i
-    loadf max
+    loadf arr_len
+    subi 1
     sub
     add
-    store
+    store ; arr[len - i - 1] = temp
 
     loadf i
     addi 1

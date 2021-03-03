@@ -21,16 +21,16 @@ impl fmt::Display for AssemblyError {
         match self {
             IOError(e) => e.fmt(f),
             LinkerErrors(errors) => {
-                for (index, err) in errors.into_iter().enumerate() {
-                    if let Err(e) = write!(f, "{}. {}", index, err) {
+                for (index, err) in errors.iter().enumerate() {
+                    if let Err(e) = writeln!(f, "{}. {}", index + 1, err) {
                         return Err(e);
                     }
                 }
                 Ok(())
             }
             ParserErrors(errors) => {
-                for (loc, err) in errors.into_iter() {
-                    if let Err(e) = write!(f, "Line {}: {}", loc, err) {
+                for (loc, err) in errors.iter() {
+                    if let Err(e) = writeln!(f, "Line {}: {}", loc + 1, err) {
                         return Err(e);
                     }
                 }
@@ -75,34 +75,35 @@ pub fn assemble_from_source<T: io::Read>(mut source: T) -> Result<AssemblyResult
         Ok(_) => {}
         Err(err) => return Err(IOError(err)),
     };
-    let mut parser = Parser::new();
-    parser.init();
-    parser.process(text);
-    parser.finish();
-    if !parser.errors.is_empty() {
-        return Err(ParserErrors(parser.errors));
+    let mut assembler = Assembler::new();
+    assembler.init();
+    assembler.process(&text);
+    assembler.finish();
+    if !assembler.errors.is_empty() {
+        return Err(ParserErrors(assembler.errors));
     }
-    let binary = match parser.linker.link_binary() {
+    let binary = match assembler.linker.link_binary() {
         Ok(bin) => bin,
         Err(errs) => return Err(LinkerErrors(errs)),
     };
-    let debug_info = DebugInfo::from(parser.linker);
+    let debug_info = DebugInfo::from(assembler.linker);
     Ok(AssemblyResult {
-        binary, debug_info,
+        binary,
+        debug_info,
     })
 }
 
 
-struct Parser {
+struct Assembler {
     pub errors: Vec<(usize, ParserError)>,
     pub linker: Linker,
 
     local_addrs: Vec<String>,
 }
 
-impl Parser {
-    pub fn new() -> Parser {
-        Parser {
+impl Assembler {
+    pub fn new() -> Assembler {
+        Assembler {
             linker: Linker::new(),
             errors: Vec::new(),
             local_addrs: Vec::new(),
@@ -117,9 +118,9 @@ impl Parser {
         }
     }
 
-    pub fn process(&mut self, text: String) {
+    pub fn process(&mut self, text: &str) {
         for (line_no, line) in text.lines().enumerate() {
-            match self.process_asm_line(line) {
+            match self.process_line(line) {
                 Err(e) => self.errors.push((line_no, e)),
                 _ => {}
             }
@@ -130,7 +131,7 @@ impl Parser {
         self.linker.finish();
     }
 
-    fn process_asm_line(&mut self, line: &str) -> Result<(), ParserError> {
+    fn process_line(&mut self, line: &str) -> Result<(), ParserError> {
         let line = line.to_string();
         let line = line.split(";").next().unwrap(); // Remove comments
         let words: Vec<&str> = line.split_ascii_whitespace().collect();
@@ -154,9 +155,9 @@ impl Parser {
         match args {
             [] => {
                 self.linker.add_inst(verb, 0);
-            },
+            }
             [arg] => {
-                return match Parser::parse_integer(arg) {
+                return match Assembler::parse_integer(arg) {
                     Ok(arg) => {
                         self.linker.add_inst(verb, arg);
                         Ok(())
@@ -179,7 +180,7 @@ impl Parser {
     fn process_macro(&mut self, verb: &str, args: &[&str]) -> Result<(), ParserError> {
         match verb {
             ".args" => {
-                if let Some(err) = Parser::expect_num_args(verb, args, 1..=10) {
+                if let Some(err) = Assembler::expect_num_args(verb, args, 1..=10) {
                     return Err(err);
                 }
                 for arg_name in args {
@@ -187,25 +188,25 @@ impl Parser {
                 }
             }
             ".locals" => {
-                if let Some(err) = Parser::expect_num_args(verb, args, 1..=10) {
+                if let Some(err) = Assembler::expect_num_args(verb, args, 1..=10) {
                     return Err(err);
                 }
                 for name in args {
                     self.linker.add_local_var(name, 1);
-                    self.linker.add_local_const(&Parser::len_name(name), 1);
+                    self.linker.add_local_const(&Assembler::len_name(name), 1);
                 }
             }
             ".local_addrs" => {
-                if let Some(err) = Parser::expect_num_args(verb, args, 1..=10) {
+                if let Some(err) = Assembler::expect_num_args(verb, args, 1..=10) {
                     return Err(err);
                 }
                 for name in args {
-                    self.linker.add_local_var(&Parser::addr_name(name), 1);
+                    self.linker.add_local_var(&Assembler::addr_name(name), 1);
                     self.local_addrs.push(name.to_string());
                 }
             }
             ".local_array" => {
-                if let Some(err) = Parser::expect_num_args(verb, args, 2..=2) {
+                if let Some(err) = Assembler::expect_num_args(verb, args, 2..=2) {
                     return Err(err);
                 }
                 let name = args[0];
@@ -214,10 +215,10 @@ impl Parser {
                     Err(err) => return Err(InvalidIntegerArg(err)),
                 };
                 self.linker.add_local_var(name, len);
-                self.linker.add_local_const(&Parser::len_name(name), len);
+                self.linker.add_local_const(&Assembler::len_name(name), len);
             }
             ".return" => {
-                if let Some(err) = Parser::expect_num_args(verb, args, 1..=1) {
+                if let Some(err) = Assembler::expect_num_args(verb, args, 1..=1) {
                     return Err(err);
                 }
                 self.linker.set_retval_name(args[0]);
@@ -233,7 +234,7 @@ impl Parser {
                 for name in self.local_addrs.drain(..) {
                     self.linker.add_placeholder_inst("loadi", "fp");
                     self.linker.add_placeholder_inst("addi", &name);
-                    self.linker.add_placeholder_inst("storef", &Parser::addr_name(&name));
+                    self.linker.add_placeholder_inst("storef", &Assembler::addr_name(&name));
                 }
             }
             ".end_frame" => {
@@ -242,11 +243,11 @@ impl Parser {
                 self.linker.add_placeholder_inst("storei", "fp");
             }
             ".define" => {
-                if let Some(err) = Parser::expect_num_args(verb, args, 2..=2) {
+                if let Some(err) = Assembler::expect_num_args(verb, args, 2..=2) {
                     return Err(err);
                 }
                 let name = args[0];
-                let value = match Parser::parse_integer(args[1]) {
+                let value = match Assembler::parse_integer(args[1]) {
                     Ok(value) => value,
                     Err(err) => return Err(err),
                 };

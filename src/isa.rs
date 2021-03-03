@@ -75,7 +75,6 @@ pub mod env_call {
     use std::io;
     use std::io::Write;
 
-
     use crate::machine::MachineError::EnvCallErr;
     use crate::mem::segs;
 
@@ -236,19 +235,19 @@ binary_op_imm_funcs! {
 }
 
 macro_rules! branch_cmp_funcs {
-        ( $($name:ident ($cmp:tt));+; ) => {
-            $(
-                #[allow(unused)]
-                pub fn $name(m: &mut Machine, offset: i32) {
-                    if let (Some(top), Some(sec)) = (pop(m), pop(m)) {
-                        if sec $cmp top {
-                            jump(m, offset);
-                        }
+    ( $($name:ident ($cmp:tt));+; ) => {
+        $(
+            #[allow(unused)]
+            pub fn $name(m: &mut Machine, offset: i32) {
+                if let (Some(top), Some(sec)) = (pop(m), pop(m)) {
+                    if sec $cmp top {
+                        jump(m, offset);
                     }
                 }
-            )+
-        }
+            }
+        )+
     }
+}
 
 branch_cmp_funcs! {
     beq ( == );
