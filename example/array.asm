@@ -25,12 +25,11 @@ entry:
     .end_frame
 
     push 0
-    ecall callcode.exit
+    ecall ecall.exit
 
 fill_array:
     .args array array.len
     .locals index val
-
     .start_frame
 
     push 0
@@ -62,17 +61,17 @@ fill_array:
     ret
 
 print_ints:
-    .args ints ints.len
+    .args ints.addr ints.len
+    .locals index int nchars
     .local_array out 9 ; 8 hex chars + 1 newline
     .local_addrs out
-    .locals index int hex_len
     .start_frame
 
     push 0
     storef index
 
     _loop:
-        loadf ints ; &ints
+        loadf ints.addr ; &ints
         loadf index
         add ; &ints + index
         load ; *(&ints + index)
@@ -82,22 +81,22 @@ print_ints:
         loadf int
         push
         jal int_to_hex
-        storef hex_len
+        storef nchars
         addsp -2
 
         push 0x0a ; newline
         loadi fp
         push out
         add
-        loadf hex_len
+        loadf nchars
         add
         store
 
-        loadf hex_len
+        loadf nchars
         addi 1 ; for the newline
         loadf out.addr
         push stdout
-        ecall callcode.write
+        ecall ecall.write
         addsp -1 ; ignore write result for now
 
         loadf index
@@ -112,10 +111,9 @@ print_ints:
     ret
 
 int_to_hex:
-    .args int buf ; buf must be at least len 8
-    .locals char
+    .args int out.addr ; buf must be at least len 8
     .return nchars
-
+    .locals char
     .start_frame
 
     push 0
@@ -130,7 +128,7 @@ int_to_hex:
         addsp -1
 
         loadf char
-        loadf buf
+        loadf out.addr
         loadf nchars
         add
         store
@@ -138,6 +136,7 @@ int_to_hex:
         loadf nchars
         addi 1
         storef nchars
+
         loadf int
         shr 4
         storef int
@@ -146,9 +145,8 @@ int_to_hex:
         loadf int
         bne _loop
 
-_end:
     loadf nchars
-    loadf buf
+    loadf out.addr
     push
     jal reverse_array
     addsp -3
@@ -159,7 +157,6 @@ _end:
 int4_to_hex_char:
     .args int
     .return char
-
     .start_frame
 
     loadf int
@@ -197,53 +194,53 @@ int4_to_hex_char:
         ret
 
 reverse_array:
-    .args arr.addr arr_len
+    .args arr.addr arr.len
     .locals temp i max
     .start_frame
 
-    loadf arr_len
+    loadf arr.len
     divi 2
     storef max
 
     push 0
     storef i
 
-_loop:
-    loadf arr.addr
-    loadf i
-    add
-    load
-    storef temp
+    _loop:
+        loadf arr.addr
+        loadf i
+        add
+        load
+        storef temp
 
-    loadf arr.addr
-    loadf i
-    loadf arr_len
-    subi 1
-    sub
-    add
-    load
+        loadf arr.addr
+        loadf i
+        loadf arr.len
+        subi 1
+        sub
+        add
+        load
 
-    loadf arr.addr
-    loadf i
-    add
-    store ; arr[i] = TOP
+        loadf arr.addr
+        loadf i
+        add
+        store ; arr[i] = TOP
 
-    loadf temp
-    loadf arr.addr
-    loadf i
-    loadf arr_len
-    subi 1
-    sub
-    add
-    store ; arr[len - i - 1] = temp
+        loadf temp
+        loadf arr.addr
+        loadf i
+        loadf arr.len
+        subi 1
+        sub
+        add
+        store ; arr[len - i - 1] = temp
 
-    loadf i
-    addi 1
-    storef i
+        loadf i
+        addi 1
+        storef i
 
-    loadf i
-    loadf max
-    blt _loop
+        loadf i
+        loadf max
+        blt _loop
 
     .end_frame
     ret

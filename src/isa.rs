@@ -1,11 +1,12 @@
 use std::collections::HashMap;
-use std::fmt::{Debug, Display, Formatter, Result};
+use std::fmt::{Debug, Display, Formatter};
 
 use crate::machine::{MachineError, MachineStatus};
 use crate::machine::MachineStatus::Stopped;
 use crate::mem::addrs;
 
 use super::Machine;
+use std::fmt;
 
 // --- START OP FUNCTIONS ---
 
@@ -98,29 +99,30 @@ pub mod env_call {
         RetCode::OK as i32
     }
 
+
     fn write(m: &mut Machine) -> i32 {
         if let (Some(fd), Some(buf), Some(buf_len)) = (pop(m), pop(m), pop(m)) {
-            match fd {
-                1 => {
-                    let addr_range = buf..(buf + buf_len);
-                    if buf < segs::ADDR_SPACE.start || buf + buf_len > segs::ADDR_SPACE.end {
-                        return RetCode::AddressOutOfBounds as i32;
-                    }
-                    let data: Vec<u8> = addr_range
-                        .map(|addr| m.unsafe_load(addr) as u8)
-                        .collect();
-                    match io::stdout().write(&data) {
-                        Err(err) => {
-                            m.set_error(EnvCallErr(format!("IO error: {}", err)));
-                            RetCode::IOError as i32
-                        }
-                        Ok(_) => RetCode::OK as i32,
-                    }
-                }
+            let addr_range = buf..(buf + buf_len);
+            if buf < segs::ADDR_SPACE.start || buf + buf_len > segs::ADDR_SPACE.end {
+                return RetCode::AddressOutOfBounds as i32;
+            }
+            let data: Vec<u8> = addr_range
+                .map(|addr| m.unsafe_load(addr) as u8)
+                .collect();
+            let result = match fd {
+                1 => io::stdout().write(&data),
+                2 => io::stderr().write(&data),
                 _ => {
                     m.set_error(EnvCallErr(format!("cannot write to fd: {}", fd)));
-                    RetCode::NotImplemented as i32
+                    return RetCode::NotImplemented as i32;
+                },
+            };
+            match result {
+                Err(err) => {
+                    m.set_error(EnvCallErr(format!("IO error: {}", err)));
+                    RetCode::IOError as i32
                 }
+                Ok(_) => RetCode::OK as i32,
             }
         } else {
             1
@@ -289,7 +291,7 @@ logical_shift_funcs! {
 
 pub struct Op {
     pub name: &'static str,
-    pub f: fn(&mut Machine, i32),
+    pub func: fn(&mut Machine, i32),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -301,7 +303,7 @@ pub struct Inst {
 }
 
 impl Display for Inst {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let addr = match self.addr {
             None => String::new(),
             Some(addr) => format!("{:x}", addr)
@@ -313,7 +315,7 @@ impl Display for Inst {
 }
 
 impl Debug for Op {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("OpFn")
             .field("name", &self.name)
             .finish()
@@ -326,7 +328,7 @@ macro_rules! def_op_list {
             $(
                 Op {
                     name: stringify!($name),
-                    f: $name,
+                    func: $name,
                 },
             )+
         ];

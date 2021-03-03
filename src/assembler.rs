@@ -95,9 +95,8 @@ pub fn assemble_from_source<T: io::Read>(mut source: T) -> Result<AssemblyResult
 
 
 struct Assembler {
-    pub errors: Vec<(usize, ParserError)>,
-    pub linker: Linker,
-
+    errors: Vec<(usize, ParserError)>,
+    linker: Linker,
     local_addrs: Vec<String>,
 }
 
@@ -113,7 +112,7 @@ impl Assembler {
     pub fn init(&mut self) {
         self.linker.init();
         for (callcode, (_, call_name)) in isa::env_call::LIST.iter().enumerate() {
-            let const_name = format!("callcode.{}", call_name);
+            let const_name = format!("ecall.{}", call_name);
             self.linker.add_constant(&const_name, callcode as i32);
         }
     }

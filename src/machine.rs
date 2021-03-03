@@ -247,7 +247,7 @@ impl Machine {
                 }
             }
             out.write_str("    ").unwrap();
-            match self.inst_at_addr(addr) {
+            match self.load_inst(addr) {
                 Ok(inst) => out.write_str(&inst.to_string()).unwrap(),
                 Err(err) => {
                     writeln!(out, "ERR FETCHING INST {:?}", err).unwrap();
@@ -400,14 +400,14 @@ impl Machine {
 
     pub fn cycle(&mut self) {
         let pc = self.getpc();
-        let inst = match self.inst_at_addr(pc) {
+        let inst = match self.load_inst(pc) {
             Err(e) => {
                 self.set_status(Error(e));
                 return;
             }
             Ok(inst) => inst
         };
-        (inst.op.f)(self, inst.arg);
+        (inst.op.func)(self, inst.arg);
         self.setpc(self.getpc() + 1);
         self.ncycles += 1;
         if self.status == Debugging {
@@ -418,7 +418,7 @@ impl Machine {
         }
     }
 
-    fn inst_at_addr(&self, addr: i32) -> Result<Inst, MachineError> {
+    fn load_inst(&self, addr: i32) -> Result<Inst, MachineError> {
         if !self.code_access_ok(addr) {
             return Err(CodeAccessSegFault { addr });
         }
