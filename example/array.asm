@@ -1,5 +1,6 @@
 .define stdout 1
 .define start_val 16
+.define increment 33
 
 entry:
     .local_array ints 20
@@ -44,7 +45,7 @@ fill_array:
         store
 
         loadf val
-        addi 1
+        addi increment
         storef val
 
         loadf index
@@ -122,12 +123,14 @@ int_to_hex:
         loadf int
         andi 0xf
         push
-        jal int_to_hex_char
+        jal int4_to_hex_char
         storef char
         addsp -1
 
         loadf char
         loadf buf
+        loadf nchars
+        add
         store
 
         loadf nchars
@@ -137,19 +140,21 @@ int_to_hex:
         shr 4
         storef int
 
-        loadf buf
-        addi 1
-        storef buf
-
         push 0
         loadf int
         bne _loop
 
 _end:
+    loadf nchars
+    loadf buf
+    push
+    jal reverse_array
+    addsp -3
+
     .end_frame
     ret
 
-int_to_hex_char:
+int4_to_hex_char:
     .args int
     .return char
 
@@ -190,11 +195,54 @@ int_to_hex_char:
         ret
 
 reverse_array:
-    .args arr arr.len
-    .locals a b
+    .args arr.addr arr_len
+    .locals temp i max
     .start_frame
 
+    loadf arr_len
+    divi 2
+    storef max
 
+    push 0
+    storef i
+
+_loop:
+    loadf arr.addr
+    loadf i
+    add
+    load
+    storef temp
+
+    loadf arr.addr
+    loadf i
+    loadf max
+    sub
+    add
+    load
+
+    ; TOP = arr[max - i], temp = arr[i]
+    loadf arr.addr
+    loadf i
+    add
+    ; TOP = arr + i
+    store
+
+    ; temp = arr[i]
+    loadf temp
+    loadf arr.addr
+    loadf i
+    loadf max
+    sub
+    add
+    store
+
+    loadf i
+    addi 1
+    storef i
+
+    loadf i
+    loadf max
+    blt _loop
 
     .end_frame
     ret
