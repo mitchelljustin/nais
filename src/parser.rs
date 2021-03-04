@@ -1,3 +1,12 @@
+use crate::tokenizer::{Token, tokenize, TokenType};
+use std::num::ParseIntError;
+use crate::parser::ParserError::NoTransitionForToken;
+
+enum ParserError {
+    NoTransitionForToken(Token),
+    CouldNotParseLiteral(ParseIntError),
+}
+
 mod ast {
     pub struct Program {
         pub main: FuncDef,
@@ -18,7 +27,7 @@ mod ast {
 
     pub enum VarType {
         I32,
-        I32Array { size: i32 },
+        I32Array { len: i32 },
     }
 
     pub enum Stmt {
@@ -29,7 +38,7 @@ mod ast {
 
     pub enum AssnTarget {
         Variable { name: String },
-        ArrayItem { array: Expr, index: Expr },
+        ArrayItem { array_name: String, index: Expr },
     }
 
     pub enum Expr {
@@ -52,32 +61,109 @@ mod ast {
         Shr,
         Sar,
     }
+
+    pub enum Node {
+        Program(Program),
+        FuncDef(FuncDef),
+        VarDef(VarDef),
+        VarType(VarType),
+        Stmt(Stmt),
+        AssnTarget(AssnTarget),
+        Expr(Expr),
+        BinOp(BinOp),
+    }
 }
 
-fn parse(text: &str) -> ast::Program {
-    return ast::Program {
-        main: ast::FuncDef {
-            name: "main".to_string(),
-            params: Vec::new(),
-            locals: Vec::new(),
-            body: vec![
-                ast::Stmt::Return {
-                    retval: ast::Expr::Literal {
-                        val: 0,
-                    }
-                }
-            ],
-        },
-        func_defs: Vec::new(),
-    };
+struct Parser {}
+
+/*
+start -> program
+program -> entry func_defs
+
+entry -> "fn" "main" "(" ")" "{" func_body "}"
+
+func_body -> local_defs stmts
+
+local_defs -> local_def local_defs
+local_defs -> ""
+
+local_def -> "let" IDENT ":" ty ";"
+
+stmts -> stmt stmts
+stmts -> ""
+
+stmt -> assn ";"
+stmt -> expr ";"
+stmt -> "return" expr ";"
+
+assn -> assn_target "=" expr
+assn_target -> IDENT
+assn_target -> IDENT "[" expr "]"
+
+expr -> "(" expr ")"
+expr -> LITERAL
+expr -> IDENT
+expr -> bin_expr
+expr -> func_call
+
+bin_expr -> expr OP expr
+
+func_call -> IDENT "(" args ")"
+
+args -> arg "," args
+args -> ""
+
+arg -> expr
+
+func_defs -> func_def func_defs
+func_defs -> ""
+
+func_def -> "fn" IDENT "(" param_defs ")" retval_def "{" func_body "}"
+
+retval_def -> ""
+retval_def -> "->" "i32"
+
+param_defs -> param_def "," param_defs
+param_defs -> ""
+
+param_def -> IDENT ":" ty
+
+ty -> "i32"
+ty -> "[" "i32" ";" LITERAL "]"
+
+*/
+
+impl Parser {
+    fn new() -> Parser {
+        Parser {}
+    }
+
+    fn parse(&mut self, tokens: &[Token]) -> Result<ast::Node, ParserError> {
+        let token_tys = tokens.iter().map(|t| t.ty).collect::<Vec<_>>();
+        let node = match token_tys[..] {
+            [TokenType::Literal] =>
+                ast::Node::Expr(ast::Expr::Literal { val: 3 }),
+            _ => return Err(NoTransitionForToken(tokens[0].clone()))
+        };
+        Ok(node)
+    }
 }
 
 
 mod tests {
+    use crate::tokenizer::dump_tokens;
+
     use super::*;
 
     #[test]
     fn test_simple() {
-        parse("");
+        let tokens = tokenize(&"
+            fn main() {
+                return 0;
+            }
+        ").unwrap();
+        let mut parser = Parser::new();
+        println!("{}", dump_tokens(&tokens));
+        parser.parse(&tokens);
     }
 }

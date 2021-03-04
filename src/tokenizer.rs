@@ -1,4 +1,3 @@
-
 use std::fmt;
 use std::fmt::Formatter;
 
@@ -7,16 +6,19 @@ const KEYWORDS: &[&str] = &[
     "if",
     "while",
     "let",
-    "return"
+    "return",
+    "i32",
 ];
 
 #[derive(Debug)]
-enum TokenizeError {
+pub enum TokenizeError {
     UnrecognizedChar(usize, char),
 }
 
 #[derive(Debug, PartialEq, Copy, Clone)]
-enum TokChar {
+enum CharType {
+    Unknown,
+
     Space,
     Letter,
     Digit,
@@ -25,8 +27,14 @@ enum TokChar {
     LParen,
     LBrac,
     RBrac,
+    LSqBrac,
+    RSqBrac,
 
+    GreaterThan,
+
+    Colon,
     Semi,
+    Comma,
 
     Eq,
 
@@ -34,8 +42,34 @@ enum TokChar {
     Minus,
 }
 
+impl From<char> for CharType {
+    fn from(ch: char) -> Self {
+        match ch {
+            '(' => CharType::LParen,
+            ')' => CharType::RParen,
+            '{' => CharType::LBrac,
+            '}' => CharType::RBrac,
+            '[' => CharType::LSqBrac,
+            ']' => CharType::RSqBrac,
+            '>' => CharType::GreaterThan,
+            ':' => CharType::Colon,
+            ';' => CharType::Semi,
+            ',' => CharType::Comma,
+            '=' => CharType::Eq,
+            '+' => CharType::Plus,
+            '-' => CharType::Minus,
+            '\t' | '\n' | '\x0C' | '\r' | ' ' => CharType::Space,
+            '0'..='9' => CharType::Digit,
+            'a'..='z' | 'A'..='Z' => CharType::Letter,
+            _ => return CharType::Unknown,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Copy, Clone)]
-enum TokenType {
+pub enum TokenType {
+    Unknown,
+
     Space,
     Ident,
     Keyword,
@@ -45,8 +79,14 @@ enum TokenType {
     LParen,
     LBrac,
     RBrac,
+    LSqBrac,
+    RSqBrac,
 
+    RArrow,
+
+    Colon,
     Semi,
+    Comma,
 
     Eq,
 
@@ -56,8 +96,36 @@ enum TokenType {
     EqEq,
 }
 
+
+impl From<CharType> for TokenType {
+    fn from(ch_ty: CharType) -> Self {
+        match ch_ty {
+            CharType::Space => TokenType::Space,
+            CharType::Letter => TokenType::Ident,
+            CharType::Digit => TokenType::Literal,
+            CharType::LParen => TokenType::LParen,
+            CharType::RParen => TokenType::RParen,
+            CharType::LBrac => TokenType::LBrac,
+            CharType::RBrac => TokenType::RBrac,
+            CharType::LSqBrac => TokenType::LSqBrac,
+            CharType::RSqBrac => TokenType::RSqBrac,
+            CharType::Colon => TokenType::Colon,
+            CharType::Semi => TokenType::Semi,
+            CharType::Comma => TokenType::Comma,
+            CharType::Eq => TokenType::Eq,
+            CharType::Plus => TokenType::Plus,
+            CharType::Minus => TokenType::Minus,
+            _ => TokenType::Unknown,
+        }
+    }
+}
+
+
 #[derive(PartialEq, Clone)]
-struct Token { ty: TokenType, val: String }
+pub struct Token {
+    pub(crate) ty: TokenType,
+    pub(crate) val: String,
+}
 
 impl fmt::Debug for Token {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -65,7 +133,7 @@ impl fmt::Debug for Token {
     }
 }
 
-fn dump_tokens(tokens: &[Token]) -> String {
+pub fn dump_tokens(tokens: &[Token]) -> String {
     tokens
         .iter()
         .map(|t| format!("{:?}", t))
@@ -73,69 +141,56 @@ fn dump_tokens(tokens: &[Token]) -> String {
         .join("\n")
 }
 
-fn tokenize(text: &str) -> Result<Vec<Token>, TokenizeError> {
-    let mut tokens = Vec::new();
-    enum Decision {
-        Append,
-        UpdateType(TokenType),
-        Cut,
+
+enum Decision {
+    Append,
+    UpdateType(TokenType),
+    Cut,
+}
+
+fn decide_token(tok_ty: TokenType, ch_ty: CharType) -> Decision {
+    use Decision::*;
+    match (tok_ty, ch_ty) {
+        // Same type
+        (TokenType::Space, CharType::Space) => Append,
+
+        (TokenType::Ident, CharType::Letter) => Append,
+        (TokenType::Ident, CharType::Digit) => Append,
+
+        (TokenType::Literal, CharType::Digit) => Append,
+
+        (TokenType::Eq, CharType::Eq) => UpdateType(TokenType::EqEq),
+        (TokenType::Minus, CharType::GreaterThan) => UpdateType(TokenType::RArrow),
+
+        (_, _) => Cut,
     }
+}
+
+pub fn tokenize(text: &str) -> Result<Vec<Token>, TokenizeError> {
+    let mut tokens = Vec::new();
+
     use Decision::*;
     let mut tok = Token { ty: TokenType::Space, val: String::new() };
     for (i, ch) in text.chars().enumerate() {
-        let ch_ty = match ch {
-            '(' => TokChar::LParen,
-            ')' => TokChar::RParen,
-            '{' => TokChar::LBrac,
-            '}' => TokChar::RBrac,
-            ';' => TokChar::Semi,
-            '=' => TokChar::Eq,
-            '+' => TokChar::Plus,
-            '-' => TokChar::Minus,
-            '\t' | '\n' | '\x0C' | '\r' | ' ' => TokChar::Space,
-            '0'..='9' => TokChar::Digit,
-            'a'..='z' | 'A'..='Z' => TokChar::Letter,
-            _ => return Err(TokenizeError::UnrecognizedChar(i, ch)),
+        let ch_ty = match CharType::from(ch) {
+            CharType::Unknown => return Err(TokenizeError::UnrecognizedChar(i, ch)),
+            ch_ty => ch_ty,
         };
-        let decision = match (tok.ty, ch_ty) {
-            // Same type
-            (TokenType::Space, TokChar::Space)    => Append,
-
-            (TokenType::Ident, TokChar::Letter)   => Append,
-            (TokenType::Ident, TokChar::Digit)    => Append,
-
-            (TokenType::Literal, TokChar::Digit)  => Append,
-
-            (TokenType::Eq, TokChar::Eq)          => UpdateType(TokenType::EqEq),
-
-            (_, _)                     => Cut,
-        };
+        let decision = decide_token(tok.ty, ch_ty);
         match decision {
             Append => {
                 tok.val.push(ch);
-            },
+            }
             UpdateType(new_ty) => {
+                tok.val.push(ch);
                 tok.ty = new_ty;
-            },
+            }
             Cut => {
                 if tok.ty == TokenType::Ident && KEYWORDS.contains(&tok.val.as_str()) {
                     tok.ty = TokenType::Keyword;
                 }
                 tokens.push(tok);
-                let ty = match ch_ty {
-                    TokChar::Space => TokenType::Space,
-                    TokChar::Letter => TokenType::Ident,
-                    TokChar::Digit => TokenType::Literal,
-
-                    TokChar::LParen => TokenType::LParen,
-                    TokChar::RParen => TokenType::RParen,
-                    TokChar::LBrac => TokenType::LBrac,
-                    TokChar::RBrac => TokenType::RBrac,
-                    TokChar::Semi => TokenType::Semi,
-                    TokChar::Eq => TokenType::Eq,
-                    TokChar::Plus => TokenType::Plus,
-                    TokChar::Minus => TokenType::Minus,
-                };
+                let ty = TokenType::from(ch_ty);
                 tok = Token { ty, val: ch.to_string() };
             }
         }
@@ -164,7 +219,7 @@ mod tests {
     }
 
     #[test]
-    fn test_simple_main() {
+    fn test_minimal_program() {
         let text = "fn main() { }";
         let tokens = match tokenize(text) {
             Err(e) => panic!("Tokenizer error: {:?}", e),
@@ -181,37 +236,16 @@ mod tests {
     }
 
     #[test]
-    fn test_complex_main() -> Result<(), TokenizeError> {
-        let text = "
-        fn main(x)
-        {
-            let x1 = x + 34;
-            print(x1);
-        }";
-        let tokens = match tokenize(text) {
-            Err(e) => panic!("Tokenizer error: {:?}", e),
-            Ok(tokens) => tokens
-        };
-        assert_eq!(dump_tokens(&tokens), gen_dump(&[
-            (Keyword, "fn"), (Ident, "main"), (LParen, "("), (Ident, "x"), (RParen, ")"),
-            (LBrac, "{"),
-            (Keyword, "let"), (Ident, "x1"), (Eq, "="), (Ident, "x"), (Plus, "+"), (Literal, "34"), (Semi, ";"),
-            (Ident, "print"), (LParen, "("), (Ident, "x1"), (RParen, ")"), (Semi, ";"),
-            (RBrac, "}"),
-        ]));
-        Ok(())
-    }
-
-    #[test]
     fn test_multi_fn() -> Result<(), TokenizeError> {
         let text = "
-        fn main(x)
+        fn main(x: i32)
         {
-            let x1 = add34(x);
+            let x1: i32;
+            x1 = add34(x);
             print(x1);
         }
 
-        fn add34(y)
+        fn add34(y: i32) -> i32
         {
             return y + 34;
         }
@@ -221,13 +255,14 @@ mod tests {
             Ok(tokens) => tokens
         };
         assert_eq!(dump_tokens(&tokens), gen_dump(&[
-            (Keyword, "fn"), (Ident, "main"), (LParen, "("), (Ident, "x"), (RParen, ")"),
+            (Keyword, "fn"), (Ident, "main"), (LParen, "("), (Ident, "x"), (Colon, ":"), (Keyword, "i32"), (RParen, ")"),
             (LBrac, "{"),
-            (Keyword, "let"), (Ident, "x1"), (Eq, "="), (Ident, "add34"), (LParen, "("), (Ident, "x"), (RParen, ")"), (Semi, ";"),
+            (Keyword, "let"), (Ident, "x1"), (Colon, ":"), (Keyword, "i32"), (Semi, ";"),
+            (Ident, "x1"), (Eq, "="), (Ident, "add34"), (LParen, "("), (Ident, "x"), (RParen, ")"), (Semi, ";"),
             (Ident, "print"), (LParen, "("), (Ident, "x1"), (RParen, ")"), (Semi, ";"),
             (RBrac, "}"),
-
-            (Keyword, "fn"), (Ident, "add34"), (LParen, "("), (Ident, "y"), (RParen, ")"),
+            (Keyword, "fn"), (Ident, "add34"), (LParen, "("), (Ident, "y"), (Colon, ":"), (Keyword, "i32"), (RParen, ")"),
+                (RArrow, "->"), (Keyword, "i32"),
             (LBrac, "{"),
             (Keyword, "return"), (Ident, "y"), (Plus, "+"), (Literal, "34"), (Semi, ";"),
             (RBrac, "}"),
