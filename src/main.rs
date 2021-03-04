@@ -1,4 +1,3 @@
-
 use std::{env, process};
 
 use machine::*;
@@ -13,6 +12,7 @@ mod mem;
 mod assembler;
 mod encoder;
 mod tokenizer;
+mod parser;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
