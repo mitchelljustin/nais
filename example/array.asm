@@ -1,11 +1,11 @@
-.define start_val 0xf000
-.define increment 0x0020
+.define start_val 0xffab
+.define increment 0x002f
 
 
 .define stdout 1
 
 entry:
-    .local_array ints 20
+    .local_array ints 100
     .local_addrs ints
 
     .start_frame

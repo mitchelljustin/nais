@@ -12,7 +12,7 @@ use crate::linker::{DebugInfo, Linker, LinkerError};
 
 pub enum AssemblyError {
     IOError(io::Error),
-    ParserErrors(Vec<(usize, ParserError)>),
+    ASMParserErrors(Vec<(usize, ParserError)>),
     LinkerErrors(Vec<LinkerError>),
 }
 
@@ -28,7 +28,7 @@ impl fmt::Display for AssemblyError {
                 }
                 Ok(())
             }
-            ParserErrors(errors) => {
+            ASMParserErrors(errors) => {
                 for (loc, err) in errors.iter() {
                     if let Err(e) = writeln!(f, "Line {}: {}", loc + 1, err) {
                         return Err(e);
@@ -114,7 +114,7 @@ impl Assembler {
     pub fn finish(mut self) -> Result<AssemblyResult, AssemblyError> {
         self.linker.finish();
         if !self.errors.is_empty() {
-            return Err(ParserErrors(self.errors));
+            return Err(ASMParserErrors(self.errors));
         }
         let binary = match self.linker.link_binary() {
             Ok(bin) => bin,
@@ -181,7 +181,7 @@ impl Assembler {
     fn process_macro(&mut self, verb: &str, args: &[&str]) -> Result<(), ParserError> {
         match verb {
             ".args" => {
-                if let Some(err) = Assembler::expect_num_args(verb, args, 1..=10) {
+                if let Some(err) = Assembler::expect_num_args(verb, args, 1..=63) {
                     return Err(err);
                 }
                 for arg_name in args {
@@ -189,7 +189,7 @@ impl Assembler {
                 }
             }
             ".locals" => {
-                if let Some(err) = Assembler::expect_num_args(verb, args, 1..=10) {
+                if let Some(err) = Assembler::expect_num_args(verb, args, 1..=63) {
                     return Err(err);
                 }
                 for name in args {
@@ -198,7 +198,7 @@ impl Assembler {
                 }
             }
             ".local_addrs" => {
-                if let Some(err) = Assembler::expect_num_args(verb, args, 1..=10) {
+                if let Some(err) = Assembler::expect_num_args(verb, args, 1..=63) {
                     return Err(err);
                 }
                 for name in args {
@@ -306,4 +306,3 @@ impl Assembler {
         format!("{}.addr", local_name)
     }
 }
-
