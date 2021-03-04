@@ -1,12 +1,10 @@
-#![allow(overflowing_literals)]
 
 use std::{env, process};
 
 use machine::*;
 
-use crate::assembler::{AssemblyResult, assemble_file};
+use crate::assembler::{assemble_file, AssemblyResult};
 
-#[macro_use]
 mod linker;
 mod machine;
 mod isa;
@@ -14,6 +12,7 @@ mod util;
 mod mem;
 mod assembler;
 mod encoder;
+mod tokenizer;
 
 fn main() {
     let args: Vec<String> = env::args().collect();

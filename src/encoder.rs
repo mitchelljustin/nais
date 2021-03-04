@@ -52,7 +52,7 @@ impl Encoder {
         let mut arg = bin_inst & 0xffffff;
         if arg >> 23 != 0 {
             // sign extend
-            arg |= 0xff000000;
+            arg |= 0xff000000u32 as i32;
         }
         let op = match self.opcode_to_op.get(&opcode) {
             None => return None,
