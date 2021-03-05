@@ -1,43 +1,56 @@
+#[derive(Debug)]
 pub struct Program {
-    pub entry: FuncDef,
     pub func_defs: Vec<FuncDef>,
 }
 
+#[derive(Debug)]
 pub struct FuncDef {
     pub name: String,
-    pub params: Vec<VarDef>,
-    pub locals: Vec<VarDef>,
+    pub params: Vec<VariableDef>,
+    pub ret_ty: Option<Ty>,
+    pub locals: Vec<VariableDef>,
     pub body: Vec<Stmt>,
 }
 
-pub struct VarDef {
+#[derive(Debug)]
+pub struct VariableDef {
     pub name: String,
-    pub ty: VarType,
+    pub ty: Ty,
 }
 
-pub enum VarType {
+#[derive(Debug)]
+pub enum Ty {
     I32,
-    I32Array { len: i32 },
+    I32Array { len: Literal },
 }
 
+#[derive(Debug)]
 pub enum Stmt {
     Assignment { target: AssnTarget, value: Expr },
     Expr { expr: Expr },
     Return { retval: Expr },
 }
 
+#[derive(Debug)]
 pub enum AssnTarget {
     Variable { name: String },
-    ArrayItem { array_name: String, index: Expr },
+    ArrayItem { name: String, index: Expr },
 }
 
+#[derive(Debug)]
 pub enum Expr {
-    Literal { val: i32 },
+    Literal(Literal),
     Variable { name: String },
     BinExpr { left: Box<Expr>, op: BinOp, right: Box<Expr> },
     FuncCall { func_name: String, args: Vec<Expr> },
 }
 
+#[derive(Debug)]
+pub struct Literal {
+    pub val: i32,
+}
+
+#[derive(Debug)]
 pub enum BinOp {
     Add,
     Sub,
@@ -50,15 +63,4 @@ pub enum BinOp {
     Shl,
     Shr,
     Sar,
-}
-
-pub enum Node {
-    Program(Program),
-    FuncDef(FuncDef),
-    VarDef(VarDef),
-    VarType(VarType),
-    Stmt(Stmt),
-    AssnTarget(AssnTarget),
-    Expr(Expr),
-    BinOp(BinOp),
 }
