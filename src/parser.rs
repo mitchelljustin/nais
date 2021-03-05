@@ -1,75 +1,8 @@
+use crate::parser::ParserError::SyntaxError;
 use crate::tokenizer::{Token, tokenize, TokenType};
 
-enum ParserError {
-}
-
 #[allow(unused)]
-mod ast {
-    pub struct Program {
-        pub entry: FuncDef,
-        pub func_defs: Vec<FuncDef>,
-    }
-
-    pub struct FuncDef {
-        pub name: String,
-        pub params: Vec<VarDef>,
-        pub locals: Vec<VarDef>,
-        pub body: Vec<Stmt>,
-    }
-
-    pub struct VarDef {
-        pub name: String,
-        pub ty: VarType,
-    }
-
-    pub enum VarType {
-        I32,
-        I32Array { len: i32 },
-    }
-
-    pub enum Stmt {
-        Assignment { target: AssnTarget, value: Expr },
-        Expr { expr: Expr },
-        Return { retval: Expr },
-    }
-
-    pub enum AssnTarget {
-        Variable { name: String },
-        ArrayItem { array_name: String, index: Expr },
-    }
-
-    pub enum Expr {
-        Literal { val: i32 },
-        Variable { name: String },
-        BinExpr { left: Box<Expr>, op: BinOp, right: Box<Expr> },
-        FuncCall { func_name: String, args: Vec<Expr> },
-    }
-
-    pub enum BinOp {
-        Add,
-        Sub,
-        Mul,
-        Div,
-        Rem,
-        And,
-        Or,
-        Xor,
-        Shl,
-        Shr,
-        Sar,
-    }
-
-    pub enum Node {
-        Program(Program),
-        FuncDef(FuncDef),
-        VarDef(VarDef),
-        VarType(VarType),
-        Stmt(Stmt),
-        AssnTarget(AssnTarget),
-        Expr(Expr),
-        BinOp(BinOp),
-    }
-}
+mod ast;
 
 /*
 start -> program
@@ -138,12 +71,18 @@ arg -> expr
 
 */
 
+
+#[derive(Debug)]
+enum ParserError {
+    SyntaxError { last_state: ParserState, tokens_left: Vec<Token> },
+}
+
+
 #[allow(non_camel_case_types, unused)]
 #[derive(Copy, Clone, PartialEq, Debug)]
 enum ParserState {
     start,
     program,
-    main_def,
     func_body,
     local_defs,
     local_def,
@@ -182,45 +121,101 @@ fn parser_transition(state: ParserState, tokens: &[(TokenType, &str)]) -> (Parse
         (start, _) =>
             (program, 0),
         (program, [(Keyword, "fn"), ..]) =>
-            (main_def, 0),
-        (program, [(Keyword, "fn"), ..]) =>
             (func_defs, 0),
         (program, []) =>
             (accept, 0),
-        (main_def, [(Keyword, "fn"), ..]) =>
-            (func_body, 5),
+
+        (func_defs, [(Keyword, "fn"), ..]) =>
+            (func_def, 0),
+        (func_defs, []) =>
+            (program, 0),
+
+        (func_def, [(Keyword, "fn"), ..]) =>
+            (param_list, 3),
+        (func_def, [(RParen, ")"), ..]) =>
+            (ret_ty, 1),
+        (func_def, [(LBrac, "{"), ..]) =>
+            (func_body, 1),
+        (func_def, [(RBrac, "}"), ..]) =>
+            (func_defs, 1),
+
+        (ret_ty, [(RArrow, "->"), ..]) =>
+            (ret_ty, 2),
+        (ret_ty, [(LBrac, "{"), ..]) =>
+            (func_def, 0),
+
+        (param_list, [(Ident, _), ..]) =>
+            (params, 0),
+        (param_list, [_, ..]) =>
+            (func_def, 0),
+
+        (params, [(Ident, _), ..]) =>
+            (param, 0),
+
+        (param, [(Ident, _)]) =>
+            (ty, 2),
+
         (func_body, [(Keyword, "let"), ..]) =>
             (local_defs, 0),
+        (func_body, [(RBrac, "}"), ..]) =>
+            (func_def, 0),
+        (func_body, [_, ..]) =>
+            (stmts, 0),
+
         (local_defs, [(Keyword, "let"), ..]) =>
             (local_def, 0),
-        (local_def, [(Keyword, "let"), (Ident, _), (Colon, _), ..]) =>
+        (local_defs, [_, ..]) =>
+            (func_body, 0),
+
+        (local_def, [(Keyword, "let"), ..]) =>
             (ty, 3),
-        // ...
-        (func_body, [(Keyword, "return"), ..]) =>
-            (stmts, 0),
-        (stmts, [(Keyword, "return"), ..]) =>
+        (local_def, [(Semi, ";"), ..]) =>
+            (local_defs, 1),
+
+        (ty, [(Keyword, "i32"), (Semi, ";"), ..]) =>
+            (local_def, 1),
+        (ty, [(LSqBrac, "["), ..]) =>
+            (ty, 3),
+
+        (stmts, [(RBrac, "}"), ..]) =>
+            (func_body, 0),
+        (stmts, [_, ..]) =>
             (stmt, 0),
+
         (stmt, [(Keyword, "return"), ..]) =>
             (expr, 1),
-        (expr, [(Literal, _), ..]) =>
-            (literal, 0),
-        (literal, [(Literal, _), (Semi, ";"), ..]) =>
-            (stmt, 1),
+        (stmt, [(Ident, _), (Eq, "="), ..]) =>
+            (assn, 0),
         (stmt, [(Semi, ";"), ..]) =>
             (stmts, 1),
-        (stmts, [(RBrac, "}")]) =>
-            (func_body, 0),
-        (func_body, [(RBrac, "}")]) =>
-            (main_def, 1),
-        (func_body, [(RBrac, "}"), ..]) =>
-            (main_def, 1),
-        (func_body, [(RBrac, "}"), ..]) =>
-            (func_def, 1),
-        (main_def, []) =>
-            (program, 0),
+
+        (assn, [(Ident, _), (Eq, "="), ..]) =>
+            (assn_target, 0),
+        (assn, [(Eq, "="), ..]) =>
+            (expr, 1),
+
+        (assn_target, [(Ident, _), (LSqBrac, "["), ..]) =>
+            (expr, 2),
+        (assn_target, [(Ident, _), ..]) =>
+            (assn, 1),
+        (assn_target, [(RSqBrac, "]"), ..]) =>
+            (assn, 1),
+
+        (expr, [(Literal, _), ..]) =>
+            (literal, 0),
+        (expr, [(Semi, ";"), ..]) =>
+            (stmt, 0),
+
+        (literal, [(Literal, _), ..]) =>
+            (expr, 1),
+
+        // ...
+
         _ => (reject, 0),
     }
 }
+
+type Transition<'a> = (ParserState, &'a [(TokenType, &'a str)]);
 
 
 fn parse(tokens: &[Token]) -> Result<ast::Node, ParserError> {
@@ -239,6 +234,12 @@ fn parse(tokens: &[Token]) -> Result<ast::Node, ParserError> {
         transitions.push(transition);
         tokens = next_tokens;
         state = next_state;
+    }
+    if state == ParserState::reject {
+        return Err(SyntaxError {
+            last_state: transitions.last().unwrap().0,
+            tokens_left: tokens.iter().map(Token::from).collect(),
+        });
     }
 
     let node = ast::Node::Expr(ast::Expr::Literal { val: 1 });
@@ -262,6 +263,9 @@ mod tests {
         println!("{}", code);
         let tokens = tokenize(&code).unwrap();
         println!("{}\n", dump_tokens(&tokens));
-        parse(&tokens);
+        match parse(&tokens) {
+            Err(e) => panic!("parser error: {:?}", e),
+            _ => {}
+        }
     }
 }

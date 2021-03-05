@@ -131,6 +131,15 @@ impl fmt::Debug for Token {
     }
 }
 
+impl<'a> From<&(TokenType, &'a str)> for Token {
+    fn from((ty, val): &(TokenType, &'a str)) -> Self {
+        Self {
+            ty: *ty,
+            val: val.to_string(),
+        }
+    }
+}
+
 pub fn dump_tokens(tokens: &[Token]) -> String {
     tokens
         .iter()
