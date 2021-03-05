@@ -3,8 +3,6 @@ use std::fmt::Formatter;
 
 const KEYWORDS: &[&str] = &[
     "fn",
-    "if",
-    "while",
     "let",
     "return",
     "i32",
@@ -169,7 +167,6 @@ fn decide_token(tok_ty: TokenType, ch_ty: CharType) -> Decision {
 pub fn tokenize(text: &str) -> Result<Vec<Token>, TokenizeError> {
     let mut tokens = Vec::new();
 
-    use Decision::*;
     let mut tok = Token { ty: TokenType::Space, val: String::new() };
     for (i, ch) in text.chars().enumerate() {
         let ch_ty = match CharType::from(ch) {
@@ -178,14 +175,14 @@ pub fn tokenize(text: &str) -> Result<Vec<Token>, TokenizeError> {
         };
         let decision = decide_token(tok.ty, ch_ty);
         match decision {
-            Append => {
+            Decision::Append => {
                 tok.val.push(ch);
             }
-            UpdateType(new_ty) => {
+            Decision::UpdateType(new_ty) => {
                 tok.val.push(ch);
                 tok.ty = new_ty;
             }
-            Cut => {
+            Decision::Cut => {
                 if tok.ty == TokenType::Ident && KEYWORDS.contains(&tok.val.as_str()) {
                     tok.ty = TokenType::Keyword;
                 }

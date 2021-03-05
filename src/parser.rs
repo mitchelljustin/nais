@@ -1,15 +1,12 @@
 use crate::tokenizer::{Token, tokenize, TokenType};
-use std::num::ParseIntError;
-use crate::parser::ParserError::NoTransitionForToken;
 
 enum ParserError {
-    NoTransitionForToken(Token),
-    CouldNotParseLiteral(ParseIntError),
 }
 
+#[allow(unused)]
 mod ast {
     pub struct Program {
-        pub main: FuncDef,
+        pub entry: FuncDef,
         pub func_defs: Vec<FuncDef>,
     }
 
@@ -74,13 +71,28 @@ mod ast {
     }
 }
 
-struct Parser {}
-
 /*
 start -> program
-program -> entry func_defs
+program -> func_defs
 
-entry -> "fn" "main" "(" ")" "{" func_body "}"
+func_defs -> func_def func_defs
+func_defs -> ""
+
+func_def -> "fn" IDENT "(" param_list ")" ret_ty "{" func_body "}"
+
+param_list -> params
+param_list -> ""
+
+params -> param "," params
+params -> param
+
+param -> IDENT ":" ty
+
+ty -> "i32"
+ty -> "[" "i32" ";" LITERAL "]"
+
+ret_ty -> ""
+ret_ty -> "->" "i32"
 
 func_body -> local_defs stmts
 
@@ -106,47 +118,131 @@ expr -> IDENT
 expr -> bin_expr
 expr -> func_call
 
-bin_expr -> expr OP expr
+bin_expr -> product "*" expr
+bin_expr -> product "/" expr
+product -> expr
 
-func_call -> IDENT "(" args ")"
+bin_expr -> term "+" expr
+bin_expr -> term "-" expr
+term -> expr
+
+func_call -> IDENT "(" arg_list ")"
+
+arg_list -> ""
+arg_list -> args
 
 args -> arg "," args
-args -> ""
+args -> arg
 
 arg -> expr
 
-func_defs -> func_def func_defs
-func_defs -> ""
-
-func_def -> "fn" IDENT "(" param_defs ")" retval_def "{" func_body "}"
-
-retval_def -> ""
-retval_def -> "->" "i32"
-
-param_defs -> param_def "," param_defs
-param_defs -> ""
-
-param_def -> IDENT ":" ty
-
-ty -> "i32"
-ty -> "[" "i32" ";" LITERAL "]"
-
 */
 
-impl Parser {
-    fn new() -> Parser {
-        Parser {}
+#[allow(non_camel_case_types, unused)]
+#[derive(Copy, Clone, PartialEq, Debug)]
+enum ParserState {
+    start,
+    program,
+    main_def,
+    func_body,
+    local_defs,
+    local_def,
+    stmts,
+    stmt,
+    assn,
+    assn_target,
+    expr,
+    bin_expr,
+    product,
+    term,
+    func_call,
+    arg_list,
+    args,
+    arg,
+    func_defs,
+    func_def,
+    param_list,
+    params,
+    param,
+    ty,
+    ret_ty,
+
+    literal,
+    ident,
+
+    accept,
+    reject,
+}
+
+
+fn parser_transition(state: ParserState, tokens: &[(TokenType, &str)]) -> (ParserState, usize) {
+    use ParserState::*;
+    use TokenType::*;
+    match (state, tokens) {
+        (start, _) =>
+            (program, 0),
+        (program, [(Keyword, "fn"), ..]) =>
+            (main_def, 0),
+        (program, [(Keyword, "fn"), ..]) =>
+            (func_defs, 0),
+        (program, []) =>
+            (accept, 0),
+        (main_def, [(Keyword, "fn"), ..]) =>
+            (func_body, 5),
+        (func_body, [(Keyword, "let"), ..]) =>
+            (local_defs, 0),
+        (local_defs, [(Keyword, "let"), ..]) =>
+            (local_def, 0),
+        (local_def, [(Keyword, "let"), (Ident, _), (Colon, _), ..]) =>
+            (ty, 3),
+        // ...
+        (func_body, [(Keyword, "return"), ..]) =>
+            (stmts, 0),
+        (stmts, [(Keyword, "return"), ..]) =>
+            (stmt, 0),
+        (stmt, [(Keyword, "return"), ..]) =>
+            (expr, 1),
+        (expr, [(Literal, _), ..]) =>
+            (literal, 0),
+        (literal, [(Literal, _), (Semi, ";"), ..]) =>
+            (stmt, 1),
+        (stmt, [(Semi, ";"), ..]) =>
+            (stmts, 1),
+        (stmts, [(RBrac, "}")]) =>
+            (func_body, 0),
+        (func_body, [(RBrac, "}")]) =>
+            (main_def, 1),
+        (func_body, [(RBrac, "}"), ..]) =>
+            (main_def, 1),
+        (func_body, [(RBrac, "}"), ..]) =>
+            (func_def, 1),
+        (main_def, []) =>
+            (program, 0),
+        _ => (reject, 0),
+    }
+}
+
+
+fn parse(tokens: &[Token]) -> Result<ast::Node, ParserError> {
+    let tokens_as_tuples = tokens
+        .iter()
+        .map(|t| (t.ty, t.val.as_str()))
+        .collect::<Vec<_>>();
+    let mut tokens = &tokens_as_tuples[..];
+    let mut state = ParserState::start;
+    let mut transitions = Vec::new();
+    while state != ParserState::accept && state != ParserState::reject {
+        let (next_state, n_eat) = parser_transition(state, &tokens);
+        let (eaten_tokens, next_tokens) = tokens.split_at(n_eat);
+        let transition = (state, eaten_tokens);
+        println!("{:?}", transition);
+        transitions.push(transition);
+        tokens = next_tokens;
+        state = next_state;
     }
 
-    fn parse(&mut self, tokens: &[Token]) -> Result<ast::Node, ParserError> {
-        let token_tys = tokens.iter().map(|t| t.ty).collect::<Vec<_>>();
-        let node = match token_tys[..] {
-            [TokenType::Literal] =>
-                ast::Node::Expr(ast::Expr::Literal { val: 3 }),
-            _ => return Err(NoTransitionForToken(tokens[0].clone()))
-        };
-        Ok(node)
-    }
+    let node = ast::Node::Expr(ast::Expr::Literal { val: 1 });
+    Ok(node)
 }
 
 
@@ -157,13 +253,15 @@ mod tests {
 
     #[test]
     fn test_simple() {
-        let tokens = tokenize(&"
-            fn main() {
-                return 0;
-            }
-        ").unwrap();
-        let mut parser = Parser::new();
-        println!("{}", dump_tokens(&tokens));
-        parser.parse(&tokens);
+        let code = "
+        fn main() {
+            let x: i32;
+            x = 3;
+        }
+        ";
+        println!("{}", code);
+        let tokens = tokenize(&code).unwrap();
+        println!("{}\n", dump_tokens(&tokens));
+        parse(&tokens);
     }
 }
