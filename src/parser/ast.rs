@@ -18,7 +18,7 @@ pub struct VariableDef {
     pub ty: Ty,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Ty {
     I32,
     I32Array { len: Literal },
@@ -39,13 +39,13 @@ pub enum AssnTarget {
 
 #[derive(Debug)]
 pub enum Expr {
-    Literal(Literal),
+    Literal { val: Literal },
     Variable { name: String },
     BinExpr { left: Box<Expr>, op: BinOp, right: Box<Expr> },
     FuncCall { func_name: String, args: Vec<Expr> },
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Literal {
     pub val: i32,
 }
