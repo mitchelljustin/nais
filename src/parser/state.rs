@@ -1,9 +1,10 @@
-use crate::tokenizer::TokenType;
+use std::collections::HashMap;
+
+use crate::tokenizer::{QuickToken, TokenType};
 
 #[allow(non_camel_case_types, unused)]
-#[derive(Copy, Clone, PartialEq, Debug)]
+#[derive(Copy, Clone, PartialEq, Debug, Hash, Eq)]
 pub(crate) enum State {
-    start,
     program,
     func_body,
     local_defs,
@@ -31,10 +32,10 @@ pub(crate) enum State {
     literal,
     ident,
 
+    START,
     ACCEPT,
     REJECT,
 }
-
 
 
 /*
@@ -129,7 +130,7 @@ pub(crate) fn state_transition(state: State, tokens: &[(TokenType, &str)]) -> (S
     use State::*;
     use TokenType::*;
     match (state, tokens) {
-        (start, _) =>
+        (START, _) =>
             (program, 0, false),
 
         (program, [(Keyword, "fn"), ..]) =>
@@ -173,10 +174,10 @@ pub(crate) fn state_transition(state: State, tokens: &[(TokenType, &str)]) -> (S
         (param, [(Comma, ","), ..]) =>
             (params, 1, false),
 
-        (func_body, [_, ..]) =>
-            (local_defs, 0, false),
         (func_body, [(RBrac, "}"), ..]) =>
             (func_def, 0, false),
+        (func_body, [_, ..]) =>
+            (local_defs, 0, false),
 
         (local_defs, [(Keyword, "let"), ..]) =>
             (local_def, 0, true),
@@ -190,7 +191,7 @@ pub(crate) fn state_transition(state: State, tokens: &[(TokenType, &str)]) -> (S
 
         (ty, [(Keyword, "i32"), ..]) =>
             (ty, 1, true),
-        (ty, [(LSqBrac, "["), (Keyword, "i32"), (Semi, ";"), ..]) =>
+        (ty, [(LSqBrac, "["), ..]) =>
             (literal, 3, true),
         // +
         (ty, [(Semi, ";"), ..]) =>
@@ -212,11 +213,15 @@ pub(crate) fn state_transition(state: State, tokens: &[(TokenType, &str)]) -> (S
             (expr, 1, true),
         (stmt, [(Ident, _), (Eq, "="), ..]) =>
             (assn, 0, true),
+        (stmt, [(Ident, _), (LSqBrac, "["), ..]) =>
+            (assn, 0, true),
         (stmt, [(Semi, ";"), ..]) =>
             (stmt, 1, false),
         (stmt, [(RBrac, "}"), ..]) =>
             (stmts, 0, false),
 
+        (assn, [(Ident, _), (LSqBrac, "["), ..]) =>
+            (assn_target, 0, true),
         (assn, [(Ident, _), (Eq, "="), ..]) =>
             (assn_target, 0, true),
         (assn, [(Eq, "="), ..]) =>
@@ -244,5 +249,166 @@ pub(crate) fn state_transition(state: State, tokens: &[(TokenType, &str)]) -> (S
         // ...
 
         _ => (REJECT, 0, true),
+    }
+}
+
+#[derive(Debug, Clone)]
+enum Matcher {
+    NT(State),
+    Ty(TokenType),
+    Ex(TokenType, &'static str),
+    EOT,
+}
+
+impl Matcher {
+    fn is_terminal(&self) -> bool {
+        match self {
+            Matcher::NT(_) => false,
+            Matcher::Ty(_) => true,
+            Matcher::Ex(_, _) => true,
+            Matcher::EOT => true,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ParseTableEntry {
+    matchers: Vec<Matcher>,
+    next_state: State,
+    consume: bool,
+}
+
+#[derive(Debug)]
+struct ParseTable {
+    transitions: HashMap<State, Vec<ParseTableEntry>>,
+}
+
+impl ParseTable {
+    fn new() -> ParseTable {
+        ParseTable {
+            transitions: HashMap::new(),
+        }
+    }
+
+    pub fn build() -> ParseTable {
+        let mut pt = ParseTable::new();
+        pt.fill();
+        pt
+    }
+
+    fn get_entries(&mut self, from: State) -> &mut Vec<ParseTableEntry> {
+        if self.transitions.get(&from).is_none() {
+            self.transitions.insert(from, Vec::new());
+        }
+        self.transitions.get_mut(&from).unwrap()
+    }
+
+    fn insert(&mut self, from: State, matchers: &[Matcher], next_state: State, consume: bool) {
+        self.get_entries(from).push(ParseTableEntry {
+            matchers: matchers.to_vec(),
+            next_state,
+            consume,
+        })
+    }
+
+    fn take_terminals(matchers: &[Matcher]) -> Vec<Matcher> {
+        matchers
+            .iter()
+            .cloned()
+            .take_while(|m| m.is_terminal())
+            .collect::<Vec<_>>()
+    }
+
+    fn add_rule(&mut self, from: State, mut to: &[Matcher]) {
+        let mut state = from;
+        while to.len() > 0 {
+            let _to_vec = to.to_vec();
+            let prefix = ParseTable::take_terminals(to);
+            let prefix_len = prefix.len();
+            let non_term = to.get(prefix_len).cloned();
+            if let Some(Matcher::NT(next_state)) = non_term {
+                self.insert(state, &prefix, next_state, true);
+                state = next_state;
+            }
+            to = &to[..prefix_len + 1];
+        }
+    }
+
+    fn fill(&mut self) {
+        use State::*;
+        use TokenType::*;
+        use Matcher::*;
+
+        self.insert(START, &[EOT], ACCEPT, true);
+
+        self.add_rule(START, &[NT(program), EOT]);
+
+        // self.add_rule(program, &[NT(func_defs), EOT]);
+        //
+        // self.add_rule(func_defs, &[NT(func_def), NT(func_defs), EOT]);
+        // self.add_rule(func_defs, &[EOT]);
+        //
+        // self.add_rule(func_def, &[
+        //     Ex(Keyword, "fn"),
+        //     Ty(Ident),
+        //     Ty(LParen),
+        //     NT(param_list),
+        //     Ty(RParen),
+        //     NT(ret_ty),
+        //     Ty(LBrac),
+        //     NT(func_body),
+        //     Ty(RBrac),
+        //     EOT,
+        // ]);
+    }
+
+    fn matches(matchers: &[Matcher], tokens: &[QuickToken]) -> bool {
+        for (m, (ty, val)) in matchers.iter().zip(tokens) {
+            let ok = match m {
+                Matcher::Ty(e_ty) =>
+                    e_ty == ty,
+                Matcher::Ex(e_ty, e_val) =>
+                    e_ty == ty && e_val == val,
+                Matcher::EOT => false,
+                Matcher::NT(_) =>
+                    panic!("Cannot match a non terminal to list of tokens: {:?}", m),
+            };
+            if !ok {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn next(&self, state: State, tokens: &[QuickToken]) -> (State, usize) {
+        let entries = match self.transitions.get(&state) {
+            None => return (State::REJECT, 0),
+            Some(entries) => entries,
+        };
+        for ParseTableEntry { matchers, next_state, consume } in entries {
+            if ParseTable::matches(&matchers, tokens) {
+                let n_consume = if consume {
+                    if let Some(Matcher::EOT) = matchers.last() {
+                        matchers.len() - 1
+                    }  else {
+                        matchers.len()
+                    }
+                } else {
+                    0
+                };
+                return (*next_state, n_consume);
+            }
+        }
+        (State::REJECT, 0)
+    }
+}
+
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_table() {
+        let table = ParseTable::build();
+        println!("{:?}", table)
     }
 }

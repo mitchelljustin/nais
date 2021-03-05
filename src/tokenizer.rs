@@ -131,7 +131,9 @@ impl fmt::Debug for Token {
     }
 }
 
-impl<'a> From<&(TokenType, &'a str)> for Token {
+pub type QuickToken<'a> = (TokenType, &'a str);
+
+impl<'a> From<&'a QuickToken<'a>> for Token {
     fn from((ty, val): &(TokenType, &'a str)) -> Self {
         Self {
             ty: *ty,

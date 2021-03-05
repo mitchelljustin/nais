@@ -1,7 +1,7 @@
 use ParserError::*;
 use state::State;
 
-use crate::tokenizer::{Token, tokenize, TokenType};
+use crate::tokenizer::{Token, tokenize, TokenType, QuickToken};
 
 #[allow(unused)]
 mod ast;
@@ -14,7 +14,6 @@ enum ParserError {
 }
 
 
-type QuickToken<'a> = (TokenType, &'a str);
 type Transition<'a> = (State, &'a [QuickToken<'a>]);
 
 #[derive(Debug)]
@@ -188,7 +187,7 @@ fn parse(tokens: &[Token]) -> Result<ast::Program, ParserError> {
         .map(|t| (t.ty, t.val.as_str()))
         .collect::<Vec<_>>();
     let mut tokens = &tokens_as_tuples[..];
-    let mut state = State::start;
+    let mut state = State::START;
     let mut transitions = Vec::new();
     while state != State::ACCEPT && state != State::REJECT {
         let (next_state, n_eat, emit) = state::state_transition(state, &tokens);
