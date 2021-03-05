@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::tokenizer::{QuickToken, TokenType};
+use crate::parser::minirust;
 
 #[allow(non_camel_case_types, unused)]
 #[derive(Copy, Clone, PartialEq, Debug, Hash, Eq)]
@@ -37,35 +38,50 @@ pub(crate) enum State {
 }
 
 #[derive(Debug, Clone)]
-enum Matcher {
+pub enum Matcher {
     S(State),
     T(TokenType),
-    TT(TokenType, String),
+    TV(TokenType, String),
     E,
 }
 
-#[allow(non_snake_case)]
-fn C(ch: char) -> Matcher {
-    Matcher::TT(
-        TokenType::from(ch),
-        ch.to_string(),
-    )
+impl From<char> for Matcher {
+    fn from(ch: char) -> Self {
+        Matcher::TV(
+            TokenType::from(ch),
+            ch.to_string(),
+        )
+    }
 }
 
-#[allow(non_snake_case)]
-fn K(name: &str) -> Matcher {
-    Matcher::TT(
-        TokenType::Keyword,
-        name.to_string()
-    )
+impl From<State> for Matcher {
+    fn from(state: State) -> Self {
+        Matcher::S(state)
+    }
 }
+
+impl From<&str> for Matcher {
+    fn from(keyword: &str) -> Self {
+        Matcher::TV(
+            TokenType::Keyword,
+            keyword.to_string(),
+        )
+    }
+}
+
+impl From<TokenType> for Matcher {
+    fn from(ty: TokenType) -> Self {
+        Matcher::T(ty)
+    }
+}
+
 
 impl Matcher {
     fn is_terminal(&self) -> bool {
         match self {
             Matcher::S(_) => false,
             Matcher::T(_) => true,
-            Matcher::TT(_, _) => true,
+            Matcher::TV(_, _) => true,
             Matcher::E => true,
         }
     }
@@ -75,12 +91,15 @@ impl Matcher {
 #[derive(Debug, Clone)]
 pub struct ProductionRule {
     lhs: State,
-    rhs: &'static [Matcher],
+    rhs: Vec<Matcher>,
 }
 
+pub type Grammar = Vec<ProductionRule>;
+
+#[macro_export]
 macro_rules! production_rules {
     {$(
-        $lhs:ident -> $( $mat:expr )+;
+        $lhs:ident -> $( $matcher:expr )+;
     )+} => {
         {
             #[allow(unused)]
@@ -89,83 +108,20 @@ macro_rules! production_rules {
             use crate::parser::state::Matcher::*;
             #[allow(unused)]
             use crate::tokenizer::TokenType::*;
+            use crate::parser::state::Matcher;
+            use crate::parser::state::ProductionRule;
             vec![
                 $(
-                    ProductionRule {lhs: $lhs, rhs: &[ $($mat,)+ ]},
+                    ProductionRule {
+                        lhs: $lhs,
+                        rhs: vec![ $(Matcher::from($matcher),)+ ]
+                    },
                 )+
             ]
         }
     };
 }
 
-pub fn minirust_grammar() -> Vec<ProductionRule> {
-    production_rules! {
-        START -> S(program);
-
-        program -> S(func_defs);
-
-        func_defs -> S(func_def) S(func_defs);
-        func_defs -> E;
-
-        func_def -> K("fn") T(Ident) C('(') S(param_list) C(')') S(ret_ty) C('{') S(func_body) C('}');
-
-        param_list -> S(params);
-        param_list -> E;
-
-        params -> S(param) C(',') S(params);
-        params -> S(param);
-
-        param -> T(Ident) C(':') S(ty);
-
-        ty -> K("i32");
-        ty -> C('[') K("i32") C(';') T(Literal) C(']');
-
-        ret_ty -> E;
-        ret_ty -> T(RArrow) S(ty);
-
-        func_body -> S(local_defs) S(stmts);
-
-        local_defs -> S(local_def) S(local_defs);
-        local_defs -> E;
-
-        local_def -> K("let") T(Ident) C(':') S(ty) C(';');
-
-        stmts -> S(stmt) S(stmts);
-        stmts -> E;
-
-        stmt -> S(assn) C(';');
-        stmt -> S(expr) C(';');
-        stmt -> K("return") S(expr) C(';');
-
-        assn -> S(assn_target) C('=') S(expr);
-        assn_target -> T(Ident);
-        assn_target -> T(Ident) C('[') S(expr) C(']');
-
-        expr -> C('(') S(expr) C(')');
-        expr -> T(Literal);
-        expr -> T(Ident);
-        expr -> S(bin_expr);
-        expr -> S(func_call);
-
-        bin_expr -> S(product) C('*') S(expr);
-        bin_expr -> S(product) C('/') S(expr);
-        product -> S(expr);
-
-        bin_expr -> S(term) C('+') S(expr);
-        bin_expr -> S(term) C('-') S(expr);
-        term -> S(expr);
-
-        func_call -> T(Ident) C('(') S(arg_list) C(')');
-
-        arg_list -> E;
-        arg_list -> S(args);
-
-        args -> S(arg) C(',') S(args);
-        args -> S(arg);
-
-        arg -> S(expr);
-    }
-}
 
 #[derive(Debug)]
 struct TransitionEntry {
@@ -175,7 +131,7 @@ struct TransitionEntry {
 }
 
 #[derive(Debug)]
-struct ParseTable {
+pub struct ParseTable {
     rules: Vec<ProductionRule>,
     transitions: HashMap<State, Vec<TransitionEntry>>,
 }
@@ -195,6 +151,10 @@ impl ParseTable {
         pt
     }
 
+    pub(crate) fn minirust() -> ParseTable {
+        ParseTable::from(minirust::grammar())
+    }
+
     fn transitions_from(&mut self, from: State) -> &mut Vec<TransitionEntry> {
         if self.transitions.get(&from).is_none() {
             self.transitions.insert(from, Vec::new());
@@ -204,15 +164,9 @@ impl ParseTable {
 
     pub fn add_rule(&mut self, rule: ProductionRule) {
         self.rules.push(rule.clone());
-        let ProductionRule { lhs, rhs } = rule;
-        let mut matchers = rhs.to_vec();
-        let transitions = self.transitions_from(lhs);
-        while matchers.len() > 0 {
-            let terminals_prefix = ParseTable::take_terminals(&matchers);
-        }
     }
 
-    fn next(&self, state: State, tokens: &[QuickToken]) -> (State, Option<ProductionRule>) {
+    pub(crate) fn transition(&self, state: State, tokens: &[QuickToken]) -> (State, Option<ProductionRule>) {
         let entries = match self.transitions.get(&state) {
             None => return (State::REJECT, None),
             Some(entries) => entries,
@@ -232,7 +186,7 @@ impl ParseTable {
             let ok = match m {
                 Matcher::T(e_ty) =>
                     e_ty == ty,
-                Matcher::TT(e_ty, e_val) =>
+                Matcher::TV(e_ty, e_val) =>
                     e_ty == ty && e_val == val,
                 Matcher::E => false,
                 Matcher::S(_) =>
@@ -245,7 +199,6 @@ impl ParseTable {
         true
     }
 
-
     fn take_terminals(matchers: &[Matcher]) -> Vec<Matcher> {
         matchers
             .iter()
@@ -255,11 +208,11 @@ impl ParseTable {
     }
 }
 
-impl From<&[ProductionRule]> for ParseTable {
-    fn from(rules: &[ProductionRule]) -> Self {
+impl From<Grammar> for ParseTable {
+    fn from(grammar: Grammar) -> Self {
         let mut pt = ParseTable::new();
-        for rule in rules {
-            pt.add_rule(rule.clone());
+        for rule in grammar.into_iter() {
+            pt.add_rule(rule);
         }
         pt
     }
@@ -272,22 +225,26 @@ mod tests {
 
     use super::*;
 
+    fn test_grammar() -> Grammar {
+        production_rules! {
+            START   -> program;
+            program -> Ident;
+        }
+    }
+
     #[test]
     fn test_parse_table() {
-        let test_grammar = production_rules! {
-            START   -> S(program);
-            program -> T(Ident);
-        };
+        println!("{:?}", test_grammar());
 
-        let table = ParseTable::from(&test_grammar);
+        let table = ParseTable::from(test_grammar());
         println!("{:?}", table);
 
         let tokens = &[
             (Ident, "ok"),
         ];
 
-        assert_eq!(table.next(program, tokens).0, START);
-        assert_eq!(table.next(START, tokens).0, program);
-        assert_eq!(table.next(START, &[]).0, ACCEPT);
+        assert_eq!(table.transition(program, tokens).0, START);
+        assert_eq!(table.transition(START, tokens).0, program);
+        assert_eq!(table.transition(START, &[]).0, ACCEPT);
     }
 }

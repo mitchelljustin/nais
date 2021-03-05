@@ -2,11 +2,12 @@ use ParserError::*;
 use state::State;
 
 use crate::tokenizer::{Token, tokenize, TokenType, QuickToken};
+use crate::parser::state::ParseTable;
 
-#[allow(unused)]
-mod ast;
+#[macro_use]
 mod state;
-mod old_trans;
+mod ast;
+mod minirust;
 
 
 #[derive(Debug)]
@@ -183,6 +184,8 @@ impl<'a> ASTBuilder<'a> {
 }
 
 fn parse(tokens: &[Token]) -> Result<ast::Program, ParserError> {
+    let table = ParseTable::minirust();
+
     let tokens_as_tuples = tokens
         .iter()
         .map(|t| (t.ty, t.val.as_str()))
@@ -191,15 +194,11 @@ fn parse(tokens: &[Token]) -> Result<ast::Program, ParserError> {
     let mut state = State::START;
     let mut transitions = Vec::new();
     while state != State::ACCEPT && state != State::REJECT {
-        let (next_state, n_eat, emit) = old_trans::state_transition(state, &tokens);
+        let (next_state, rule) = table.transition(state, &tokens);
         let (eaten_tokens, next_tokens) = tokens.split_at(n_eat);
         let transition = (state, eaten_tokens);
-        if emit {
-            println!("{:?}", transition);
-            transitions.push(transition);
-        } else {
-            println!("// {:?}", transition);
-        }
+        println!("{:?}", transition);
+        transitions.push(transition);
         tokens = next_tokens;
         state = next_state;
     }
