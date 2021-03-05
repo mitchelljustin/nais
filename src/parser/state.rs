@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
-use crate::tokenizer::{QuickToken, TokenType};
-use crate::parser::minirust;
+use crate::tokenizer::{Token, TokenType};
 
 #[allow(non_camel_case_types, unused)]
 #[derive(Copy, Clone, PartialEq, Debug, Hash, Eq)]
@@ -33,16 +32,20 @@ pub(crate) enum State {
     param,
     ty,
     ret_ty,
-    literal,
-    ident,
+    if_stmt,
+    while_stmt,
+    return_stmt,
+    cond,
+    bin_op,
+    cmp_op,
 }
 
 #[derive(Debug, Clone)]
-pub enum Matcher {
+pub(crate) enum Matcher {
     S(State),
     T(TokenType),
     TV(TokenType, String),
-    E,
+    EMPTY,
 }
 
 impl From<char> for Matcher {
@@ -82,19 +85,19 @@ impl Matcher {
             Matcher::S(_) => false,
             Matcher::T(_) => true,
             Matcher::TV(_, _) => true,
-            Matcher::E => true,
+            Matcher::EMPTY => true,
         }
     }
 }
 
 
 #[derive(Debug, Clone)]
-pub struct ProductionRule {
-    lhs: State,
-    rhs: Vec<Matcher>,
+pub(crate) struct ProductionRule {
+    pub(crate) lhs: State,
+    pub(crate) rhs: Vec<Matcher>,
 }
 
-pub type Grammar = Vec<ProductionRule>;
+pub(crate) type Grammar = Vec<ProductionRule>;
 
 #[macro_export]
 macro_rules! production_rules {
@@ -108,8 +111,10 @@ macro_rules! production_rules {
             use crate::parser::state::Matcher::*;
             #[allow(unused)]
             use crate::tokenizer::TokenType::*;
+
             use crate::parser::state::Matcher;
             use crate::parser::state::ProductionRule;
+
             vec![
                 $(
                     ProductionRule {
@@ -131,7 +136,7 @@ struct TransitionEntry {
 }
 
 #[derive(Debug)]
-pub struct ParseTable {
+pub(crate) struct ParseTable {
     rules: Vec<ProductionRule>,
     transitions: HashMap<State, Vec<TransitionEntry>>,
 }
@@ -144,15 +149,11 @@ impl ParseTable {
         };
         pt.transitions_from(State::START)
             .push(TransitionEntry {
-                matchers: vec![Matcher::E],
+                matchers: vec![Matcher::EMPTY],
                 next_state: State::ACCEPT,
                 rule: None,
             });
         pt
-    }
-
-    pub(crate) fn minirust() -> ParseTable {
-        ParseTable::from(minirust::grammar())
     }
 
     fn transitions_from(&mut self, from: State) -> &mut Vec<TransitionEntry> {
@@ -162,11 +163,11 @@ impl ParseTable {
         self.transitions.get_mut(&from).unwrap()
     }
 
-    pub fn add_rule(&mut self, rule: ProductionRule) {
+    pub(crate) fn add_rule(&mut self, rule: ProductionRule) {
         self.rules.push(rule.clone());
     }
 
-    pub(crate) fn transition(&self, state: State, tokens: &[QuickToken]) -> (State, Option<ProductionRule>) {
+    pub(crate) fn transition(&self, state: State, tokens: &[Token]) -> (State, Option<ProductionRule>) {
         let entries = match self.transitions.get(&state) {
             None => return (State::REJECT, None),
             Some(entries) => entries,
@@ -181,30 +182,23 @@ impl ParseTable {
         (State::REJECT, None)
     }
 
-    fn matches(matchers: &[Matcher], tokens: &[QuickToken]) -> bool {
-        for (m, (ty, val)) in matchers.iter().zip(tokens) {
+    fn matches(matchers: &[Matcher], tokens: &[Token]) -> bool {
+        if let Some(Matcher::EMPTY) = matchers.first() {
+            return true;
+        }
+        for (m, Token { ty, val }) in matchers.iter().zip(tokens) {
             let ok = match m {
                 Matcher::T(e_ty) =>
                     e_ty == ty,
                 Matcher::TV(e_ty, e_val) =>
                     e_ty == ty && e_val == val,
-                Matcher::E => false,
-                Matcher::S(_) =>
-                    panic!("Cannot match a non terminal to list of tokens: {:?}", m),
+                _ => panic!("Cannot match a non terminal to list of tokens: {:?}", m),
             };
             if !ok {
                 return false;
             }
         }
         true
-    }
-
-    fn take_terminals(matchers: &[Matcher]) -> Vec<Matcher> {
-        matchers
-            .iter()
-            .cloned()
-            .take_while(|m| m.is_terminal())
-            .collect::<Vec<_>>()
     }
 }
 
@@ -219,6 +213,7 @@ impl From<Grammar> for ParseTable {
 }
 
 mod tests {
+    #![allow(unused_imports)]
     use Matcher::*;
     use State::*;
     use TokenType::*;
@@ -230,21 +225,5 @@ mod tests {
             START   -> program;
             program -> Ident;
         }
-    }
-
-    #[test]
-    fn test_parse_table() {
-        println!("{:?}", test_grammar());
-
-        let table = ParseTable::from(test_grammar());
-        println!("{:?}", table);
-
-        let tokens = &[
-            (Ident, "ok"),
-        ];
-
-        assert_eq!(table.transition(program, tokens).0, START);
-        assert_eq!(table.transition(START, tokens).0, program);
-        assert_eq!(table.transition(START, &[]).0, ACCEPT);
     }
 }

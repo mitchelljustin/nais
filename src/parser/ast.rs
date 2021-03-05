@@ -1,3 +1,8 @@
+#![allow(unused)]
+
+use crate::parser::state::State;
+use crate::tokenizer::TokenType;
+
 #[derive(Debug)]
 pub struct Program {
     pub func_defs: Vec<FuncDef>,
@@ -64,3 +69,7 @@ pub enum BinOp {
     Shr,
     Sar,
 }
+
+
+#[derive(Debug)]
+pub struct Builder {}

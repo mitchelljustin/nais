@@ -29,12 +29,12 @@ pub enum CharType {
     RSqBrac,
 
     GreaterThan,
+    LessThan,
+    Eq,
 
     Colon,
     Semi,
     Comma,
-
-    Eq,
 
     Plus,
     Minus,
@@ -50,6 +50,7 @@ impl From<char> for CharType {
             '[' => CharType::LSqBrac,
             ']' => CharType::RSqBrac,
             '>' => CharType::GreaterThan,
+            '<' => CharType::LessThan,
             ':' => CharType::Colon,
             ';' => CharType::Semi,
             ',' => CharType::Comma,
@@ -92,6 +93,8 @@ pub enum TokenType {
     Minus,
 
     EqEq,
+    LessThan,
+    GreaterThan,
 }
 
 
@@ -107,6 +110,8 @@ impl From<CharType> for TokenType {
             CharType::RBrac => TokenType::RBrac,
             CharType::LSqBrac => TokenType::LSqBrac,
             CharType::RSqBrac => TokenType::RSqBrac,
+            CharType::LessThan => TokenType::LessThan,
+            CharType::GreaterThan => TokenType::GreaterThan,
             CharType::Colon => TokenType::Colon,
             CharType::Semi => TokenType::Semi,
             CharType::Comma => TokenType::Comma,
@@ -137,17 +142,6 @@ impl fmt::Debug for Token {
     }
 }
 
-pub type QuickToken<'a> = (TokenType, &'a str);
-
-impl<'a> From<&'a QuickToken<'a>> for Token {
-    fn from((ty, val): &(TokenType, &'a str)) -> Self {
-        Self {
-            ty: *ty,
-            val: val.to_string(),
-        }
-    }
-}
-
 pub fn dump_tokens(tokens: &[Token]) -> String {
     tokens
         .iter()
@@ -174,8 +168,10 @@ fn decide_token(tok_ty: TokenType, ch_ty: CharType) -> Decision {
 
         (TokenType::Literal, CharType::Digit) => Append,
 
-        (TokenType::Eq, CharType::Eq) => UpdateType(TokenType::EqEq),
-        (TokenType::Minus, CharType::GreaterThan) => UpdateType(TokenType::RArrow),
+        (TokenType::Eq,     CharType::Eq) =>
+            UpdateType(TokenType::EqEq),
+        (TokenType::Minus,  CharType::GreaterThan) =>
+            UpdateType(TokenType::RArrow),
 
         (_, _) => Cut,
     }
