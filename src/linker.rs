@@ -5,7 +5,7 @@ use std::ops::Range;
 
 use crate::encoder::Encoder;
 use crate::isa::{Inst, OP_INVALID};
-use crate::linker::LinkerError::{FrameRetvalAlreadyDefined, MissingTarget};
+use crate::linker::LinkerError::MissingTarget;
 use crate::mem::{addrs, inst_loc_to_addr};
 
 #[derive(Clone)]
@@ -71,7 +71,6 @@ pub struct CallFrame {
     pub addr_range: Range<i32>,
     pub frame_labels: HashMap<String, i32>,
     pub inner_labels: HashMap<String, i32>,
-    pub retval_name: Option<String>,
     pub locals_size: i32,
     pub args_size: i32,
 }
@@ -81,7 +80,6 @@ pub enum LinkerError {
     NeedToDefineEntryLabel,
     MissingTarget(Inst, String),
     NoSuchOp(i32, String),
-    FrameRetvalAlreadyDefined { existing: String, new: String },
 }
 
 impl Display for LinkerError {
@@ -129,6 +127,7 @@ impl Linker {
         self.add_global_var("pc", addrs::PC);
         self.add_global_var("sp", addrs::SP);
         self.add_global_var("fp", addrs::FP);
+        self.add_constant("retval", -3);
     }
 
     pub fn add_inst(&mut self, opname: &str, arg: i32) {
@@ -177,7 +176,6 @@ impl Linker {
             addr_range: next_addr..-1,
             frame_labels: HashMap::new(),
             inner_labels: HashMap::new(),
-            retval_name: None,
             locals_size: 0,
             args_size: 0,
         });
@@ -219,11 +217,6 @@ impl Linker {
         frame.locals_size += size;
     }
 
-    pub fn add_local_const(&mut self, name: &str, val: i32) {
-        let frame = self.cur_frame();
-        frame.frame_labels.insert(name.to_string(), val);
-    }
-
     pub fn add_arg_var(&mut self, name: &str, size: i32) {
         let frame = self.cur_frame();
         frame.frame_labels.insert(
@@ -233,32 +226,18 @@ impl Linker {
         frame.args_size += size;
     }
 
-    pub fn set_retval_name(&mut self, name: &str) {
-        let frame = self.cur_frame();
-        if let Some(existing) = &frame.retval_name {
-            let existing = existing.clone();
-            self.errors.push(FrameRetvalAlreadyDefined {
-                existing,
-                new: name.to_string(),
-            });
-            return;
-        }
-        frame.frame_labels.insert(name.to_string(), -3);
-        frame.retval_name = Some(name.to_string());
-    }
-
     pub fn add_constant(&mut self, name: &str, value: i32) {
         self.constants.insert(String::from(name), value);
     }
 
-    pub fn alloc_locals(&mut self) {
+    pub fn locals_alloc(&mut self) {
         let extend_sz = self.cur_frame().locals_size;
         if extend_sz > 0 {
             self.add_inst("addsp", extend_sz);
         }
     }
 
-    pub fn free_locals(&mut self) {
+    pub fn locals_free(&mut self) {
         let drop_sz = self.cur_frame().locals_size;
         if drop_sz > 0 {
             self.add_inst("addsp", -drop_sz);

@@ -14,7 +14,7 @@ pub enum TokenizeError {
 }
 
 #[derive(Debug, PartialEq, Copy, Clone)]
-enum CharType {
+pub enum CharType {
     Unknown,
 
     Space,
@@ -115,6 +115,12 @@ impl From<CharType> for TokenType {
             CharType::Minus => TokenType::Minus,
             _ => TokenType::Unknown,
         }
+    }
+}
+
+impl From<char> for TokenType {
+    fn from(ch: char) -> Self {
+        TokenType::from(CharType::from(ch))
     }
 }
 

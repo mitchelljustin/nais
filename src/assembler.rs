@@ -48,6 +48,7 @@ pub enum ParserError {
     OnlyAsciiCharsSupported { char: String },
     InstHasMultipleArgs { verb: String, args: Vec<String> },
 
+    UnknownError,
     _NotAnIntegerArg,
 }
 
@@ -85,7 +86,6 @@ pub fn assemble_from_source<T: io::Read>(mut source: T) -> Result<AssemblyResult
 struct Assembler {
     errors: Vec<(usize, ParserError)>,
     linker: Linker,
-    local_addrs: Vec<String>,
 }
 
 impl Assembler {
@@ -93,7 +93,6 @@ impl Assembler {
         Assembler {
             linker: Linker::new(),
             errors: Vec::new(),
-            local_addrs: Vec::new(),
         }
     }
 
@@ -157,7 +156,7 @@ impl Assembler {
             [] => {
                 self.linker.add_inst(verb, 0);
                 Ok(())
-            },
+            }
             [arg] => {
                 match Assembler::parse_integer(arg) {
                     Ok(arg) => {
@@ -170,7 +169,7 @@ impl Assembler {
                     }
                     Err(err) => Err(err),
                 }
-            },
+            }
             _ => Err(InstHasMultipleArgs {
                 verb: verb.to_string(),
                 args: args.into_iter().map(|s| s.to_string()).collect(),
@@ -180,49 +179,17 @@ impl Assembler {
 
     fn process_macro(&mut self, verb: &str, args: &[&str]) -> Result<(), ParserError> {
         match verb {
-            ".args" => {
-                if let Some(err) = Assembler::expect_num_args(verb, args, 1..=63) {
-                    return Err(err);
-                }
-                for arg_name in args {
-                    self.linker.add_arg_var(arg_name, 1);
-                }
+            ".arg" => {
+                let (name, size) = Assembler::expect_name_and_literal(verb, args)?;
+                self.linker.add_arg_var(name, size);
             }
-            ".locals" => {
-                if let Some(err) = Assembler::expect_num_args(verb, args, 1..=63) {
-                    return Err(err);
-                }
-                for name in args {
-                    self.linker.add_local_var(name, 1);
-                    self.linker.add_local_const(&Assembler::len_name(name), 1);
-                }
+            ".local" => {
+                let (name, size) = Assembler::expect_name_and_literal(verb, args)?;
+                self.linker.add_local_var(name, size);
             }
-            ".local_addrs" => {
-                if let Some(err) = Assembler::expect_num_args(verb, args, 1..=63) {
-                    return Err(err);
-                }
-                for name in args {
-                    self.linker.add_local_var(&Assembler::addr_name(name), 1);
-                    self.local_addrs.push(name.to_string());
-                }
-            }
-            ".local_array" => {
-                if let Some(err) = Assembler::expect_num_args(verb, args, 2..=2) {
-                    return Err(err);
-                }
-                let name = args[0];
-                let len = match i32::from_str_radix(args[1], 10) {
-                    Ok(len) => len,
-                    Err(err) => return Err(InvalidIntegerArg(err)),
-                };
-                self.linker.add_local_var(name, len);
-                self.linker.add_local_const(&Assembler::len_name(name), len);
-            }
-            ".return" => {
-                if let Some(err) = Assembler::expect_num_args(verb, args, 1..=1) {
-                    return Err(err);
-                }
-                self.linker.set_retval_name(args[0]);
+            ".const" => {
+                let (name, value) = Assembler::expect_name_and_literal(verb, args)?;
+                self.linker.add_constant(name, value);
             }
             ".start_frame" => {
                 self.linker.add_placeholder_inst("loadi", "fp");
@@ -230,29 +197,12 @@ impl Assembler {
                 self.linker.add_placeholder_inst("loadi", "sp");
                 self.linker.add_placeholder_inst("storei", "fp");
 
-                self.linker.alloc_locals();
-
-                for name in self.local_addrs.drain(..) {
-                    self.linker.add_placeholder_inst("loadi", "fp");
-                    self.linker.add_placeholder_inst("addi", &name);
-                    self.linker.add_placeholder_inst("storef", &Assembler::addr_name(&name));
-                }
+                self.linker.locals_alloc();
             }
             ".end_frame" => {
-                self.linker.free_locals();
+                self.linker.locals_free();
 
                 self.linker.add_placeholder_inst("storei", "fp");
-            }
-            ".define" => {
-                if let Some(err) = Assembler::expect_num_args(verb, args, 2..=2) {
-                    return Err(err);
-                }
-                let name = args[0];
-                let value = match Assembler::parse_integer(args[1]) {
-                    Ok(value) => value,
-                    Err(err) => return Err(err),
-                };
-                self.linker.add_constant(name, value);
             }
             unknown => return Err(UnknownMacro { verb: unknown.to_string() })
         }
@@ -286,23 +236,23 @@ impl Assembler {
         Err(_NotAnIntegerArg)
     }
 
-    fn expect_num_args(verb: &str, args: &[&str], expected: RangeInclusive<usize>) -> Option<ParserError> {
+    fn expect_num_args<'a>(verb: &'a str, args: &'a [&'a str], expected: RangeInclusive<usize>)
+                           -> Result<&'a [&'a str], ParserError> {
         if !expected.contains(&args.len()) {
-            Some(WrongNumberOfArguments {
+            return Err(WrongNumberOfArguments {
                 expected,
                 actual: args.len(),
                 verb: verb.to_string(),
-            })
-        } else {
-            None
+            });
         }
+        Ok(args)
     }
 
-    fn len_name(local_name: &str) -> String {
-        format!("{}.len", local_name)
-    }
-
-    fn addr_name(local_name: &str) -> String {
-        format!("{}.addr", local_name)
+    fn expect_name_and_literal<'a>(verb: &'a str, args: &'a [&'a str]) -> Result<(&'a str, i32), ParserError> {
+        if let &[name, literal] = Assembler::expect_num_args(verb, args, 2..=2)? {
+            let literal = Assembler::parse_integer(literal)?;
+            return Ok((name, literal));
+        }
+        Err(UnknownError)
     }
 }

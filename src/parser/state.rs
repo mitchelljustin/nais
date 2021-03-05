@@ -5,6 +5,10 @@ use crate::tokenizer::{QuickToken, TokenType};
 #[allow(non_camel_case_types, unused)]
 #[derive(Copy, Clone, PartialEq, Debug, Hash, Eq)]
 pub(crate) enum State {
+    START,
+    ACCEPT,
+    REJECT,
+
     program,
     func_body,
     local_defs,
@@ -28,349 +32,210 @@ pub(crate) enum State {
     param,
     ty,
     ret_ty,
-
     literal,
     ident,
-
-    START,
-    ACCEPT,
-    REJECT,
-}
-
-
-/*
-(program, [])
-(func_defs, [])
-(func_def, [(Keyword, "fn"), (Ident, "main"), (LParen, "(")])
-(param_list, [])
-(ret_ty, [])
-(func_body, [])
-(local_defs, [])
-(local_def, [(Keyword, "let"), (Ident, "x"), (Colon, ":")])
-(ty, [(Keyword, "i32")])
-(func_body, [])
-(stmts, [])
-(stmt, [])
-(assn, [])
-(assn_target, [(Ident, "x")])
-(expr, [])
-(literal, [(Literal, "3")])
-
- */
-
-/*
-start -> program
-program -> func_defs
-
-func_defs -> func_def func_defs
-func_defs -> ""
-
-func_def -> "fn" IDENT "(" param_list ")" ret_ty "{" func_body "}"
-
-param_list -> params
-param_list -> ""
-
-params -> param "," params
-params -> param
-
-param -> IDENT ":" ty
-
-ty -> "i32"
-ty -> "[" "i32" ";" LITERAL "]"
-
-ret_ty -> ""
-ret_ty -> "->" ty
-
-func_body -> local_defs stmts
-
-local_defs -> local_def local_defs
-local_defs -> ""
-
-local_def -> "let" IDENT ":" ty ";"
-
-stmts -> stmt stmts
-stmts -> ""
-
-stmt -> assn ";"
-stmt -> expr ";"
-stmt -> "return" expr ";"
-
-assn -> assn_target "=" expr
-assn_target -> IDENT
-assn_target -> IDENT "[" expr "]"
-
-expr -> "(" expr ")"
-expr -> LITERAL
-expr -> IDENT
-expr -> bin_expr
-expr -> func_call
-
-bin_expr -> product "*" expr
-bin_expr -> product "/" expr
-product -> expr
-
-bin_expr -> term "+" expr
-bin_expr -> term "-" expr
-term -> expr
-
-func_call -> IDENT "(" arg_list ")"
-
-arg_list -> ""
-arg_list -> args
-
-args -> arg "," args
-args -> arg
-
-arg -> expr
-
-*/
-
-
-pub(crate) fn state_transition(state: State, tokens: &[(TokenType, &str)]) -> (State, usize, bool) {
-    use State::*;
-    use TokenType::*;
-    match (state, tokens) {
-        (START, _) =>
-            (program, 0, false),
-
-        (program, [(Keyword, "fn"), ..]) =>
-            (func_defs, 0, true),
-        (program, []) =>
-            (ACCEPT, 0, false),
-
-        (func_defs, [(Keyword, "fn"), ..]) =>
-            (func_def, 0, true),
-        (func_defs, []) =>
-            (program, 0, false),
-
-        (func_def, [(Keyword, "fn"), ..]) =>
-            (param_list, 3, true),
-        (func_def, [(RParen, ")"), ..]) =>
-            (ret_ty, 1, false),
-        (func_def, [(LBrac, "{"), ..]) =>
-            (func_body, 1, false),
-        (func_def, [(RBrac, "}"), ..]) =>
-            (func_def, 1, false),
-        (func_def, []) =>
-            (program, 0, false),
-
-        (ret_ty, [(RArrow, "->"), ..]) =>
-            (ty, 1, true),
-        (ret_ty, [(LBrac, "{"), ..]) =>
-            (func_def, 0, true),
-
-        (param_list, [(Ident, _), ..]) =>
-            (params, 0, true),
-        (param_list, [_, ..]) =>
-            (func_def, 0, true),
-
-        (params, [(Ident, _), ..]) =>
-            (param, 0, true),
-        (params, [..]) =>
-            (func_def, 0, false),
-
-        (param, [(Ident, _), ..]) =>
-            (ty, 2, true),
-        (param, [(Comma, ","), ..]) =>
-            (params, 1, false),
-
-        (func_body, [(RBrac, "}"), ..]) =>
-            (func_def, 0, false),
-        (func_body, [_, ..]) =>
-            (local_defs, 0, false),
-
-        (local_defs, [(Keyword, "let"), ..]) =>
-            (local_def, 0, true),
-        (local_defs, [..]) =>
-            (func_body, 0, false),
-
-        (local_def, [(Keyword, "let"), ..]) =>
-            (ty, 3, true),
-        (local_def, [(Semi, ";"), ..]) =>
-            (local_defs, 1, false),
-
-        (ty, [(Keyword, "i32"), ..]) =>
-            (ty, 1, true),
-        (ty, [(LSqBrac, "["), ..]) =>
-            (literal, 3, true),
-        // +
-        (ty, [(Semi, ";"), ..]) =>
-            (local_defs, 1, false),
-        (ty, [(RSqBrac, "]"), ..]) =>
-            (ty, 3, false),
-        (ty, [(LBrac, "{"), ..]) =>
-            (func_def, 0, false),
-        // +
-        (ty, [..]) =>
-            (param, 1, false),
-
-        (stmts, [(RBrac, "}"), ..]) =>
-            (func_body, 0, false),
-        (stmts, [_, ..]) =>
-            (stmt, 0, true),
-
-        (stmt, [(Keyword, "return"), ..]) =>
-            (expr, 1, true),
-        (stmt, [(Ident, _), (Eq, "="), ..]) =>
-            (assn, 0, true),
-        (stmt, [(Ident, _), (LSqBrac, "["), ..]) =>
-            (assn, 0, true),
-        (stmt, [(Semi, ";"), ..]) =>
-            (stmt, 1, false),
-        (stmt, [(RBrac, "}"), ..]) =>
-            (stmts, 0, false),
-
-        (assn, [(Ident, _), (LSqBrac, "["), ..]) =>
-            (assn_target, 0, true),
-        (assn, [(Ident, _), (Eq, "="), ..]) =>
-            (assn_target, 0, true),
-        (assn, [(Eq, "="), ..]) =>
-            (expr, 1, false),
-
-        (assn_target, [(Ident, _), (LSqBrac, "["), ..]) =>
-            (expr, 2, true),
-        (assn_target, [(Ident, _), ..]) =>
-            (assn, 1, true),
-        (assn_target, [(RSqBrac, "]"), ..]) =>
-            (assn, 1, false),
-
-        (expr, [(Literal, _), ..]) =>
-            (literal, 0, true),
-        (expr, [(Ident, _), ..]) =>
-            (expr, 1, true),
-        (expr, [(Semi, ";"), ..]) =>
-            (stmt, 0, false),
-
-        (literal, [(Literal, _), (RSqBrac, "]")]) =>
-            (ty, 1, true),
-        (literal, [(Literal, _), ..]) =>
-            (expr, 1, true),
-
-        // ...
-
-        _ => (REJECT, 0, true),
-    }
 }
 
 #[derive(Debug, Clone)]
 enum Matcher {
-    NT(State),
-    Ty(TokenType),
-    Ex(TokenType, &'static str),
-    EOT,
+    S(State),
+    T(TokenType),
+    TT(TokenType, String),
+    E,
+}
+
+#[allow(non_snake_case)]
+fn C(ch: char) -> Matcher {
+    Matcher::TT(
+        TokenType::from(ch),
+        ch.to_string(),
+    )
+}
+
+#[allow(non_snake_case)]
+fn K(name: &str) -> Matcher {
+    Matcher::TT(
+        TokenType::Keyword,
+        name.to_string()
+    )
 }
 
 impl Matcher {
     fn is_terminal(&self) -> bool {
         match self {
-            Matcher::NT(_) => false,
-            Matcher::Ty(_) => true,
-            Matcher::Ex(_, _) => true,
-            Matcher::EOT => true,
+            Matcher::S(_) => false,
+            Matcher::T(_) => true,
+            Matcher::TT(_, _) => true,
+            Matcher::E => true,
         }
     }
 }
 
+
+#[derive(Debug, Clone)]
+pub struct ProductionRule {
+    lhs: State,
+    rhs: &'static [Matcher],
+}
+
+macro_rules! production_rules {
+    {$(
+        $lhs:ident -> $( $mat:expr )+;
+    )+} => {
+        {
+            #[allow(unused)]
+            use crate::parser::state::State::*;
+            #[allow(unused)]
+            use crate::parser::state::Matcher::*;
+            #[allow(unused)]
+            use crate::tokenizer::TokenType::*;
+            vec![
+                $(
+                    ProductionRule {lhs: $lhs, rhs: &[ $($mat,)+ ]},
+                )+
+            ]
+        }
+    };
+}
+
+pub fn minirust_grammar() -> Vec<ProductionRule> {
+    production_rules! {
+        START -> S(program);
+
+        program -> S(func_defs);
+
+        func_defs -> S(func_def) S(func_defs);
+        func_defs -> E;
+
+        func_def -> K("fn") T(Ident) C('(') S(param_list) C(')') S(ret_ty) C('{') S(func_body) C('}');
+
+        param_list -> S(params);
+        param_list -> E;
+
+        params -> S(param) C(',') S(params);
+        params -> S(param);
+
+        param -> T(Ident) C(':') S(ty);
+
+        ty -> K("i32");
+        ty -> C('[') K("i32") C(';') T(Literal) C(']');
+
+        ret_ty -> E;
+        ret_ty -> T(RArrow) S(ty);
+
+        func_body -> S(local_defs) S(stmts);
+
+        local_defs -> S(local_def) S(local_defs);
+        local_defs -> E;
+
+        local_def -> K("let") T(Ident) C(':') S(ty) C(';');
+
+        stmts -> S(stmt) S(stmts);
+        stmts -> E;
+
+        stmt -> S(assn) C(';');
+        stmt -> S(expr) C(';');
+        stmt -> K("return") S(expr) C(';');
+
+        assn -> S(assn_target) C('=') S(expr);
+        assn_target -> T(Ident);
+        assn_target -> T(Ident) C('[') S(expr) C(']');
+
+        expr -> C('(') S(expr) C(')');
+        expr -> T(Literal);
+        expr -> T(Ident);
+        expr -> S(bin_expr);
+        expr -> S(func_call);
+
+        bin_expr -> S(product) C('*') S(expr);
+        bin_expr -> S(product) C('/') S(expr);
+        product -> S(expr);
+
+        bin_expr -> S(term) C('+') S(expr);
+        bin_expr -> S(term) C('-') S(expr);
+        term -> S(expr);
+
+        func_call -> T(Ident) C('(') S(arg_list) C(')');
+
+        arg_list -> E;
+        arg_list -> S(args);
+
+        args -> S(arg) C(',') S(args);
+        args -> S(arg);
+
+        arg -> S(expr);
+    }
+}
+
 #[derive(Debug)]
-struct ParseTableEntry {
+struct TransitionEntry {
     matchers: Vec<Matcher>,
     next_state: State,
-    consume: bool,
+    rule: Option<ProductionRule>,
 }
 
 #[derive(Debug)]
 struct ParseTable {
-    transitions: HashMap<State, Vec<ParseTableEntry>>,
+    rules: Vec<ProductionRule>,
+    transitions: HashMap<State, Vec<TransitionEntry>>,
 }
 
 impl ParseTable {
     fn new() -> ParseTable {
-        ParseTable {
+        let mut pt = ParseTable {
+            rules: Vec::new(),
             transitions: HashMap::new(),
-        }
-    }
-
-    pub fn build() -> ParseTable {
-        let mut pt = ParseTable::new();
-        pt.fill();
+        };
+        pt.transitions_from(State::START)
+            .push(TransitionEntry {
+                matchers: vec![Matcher::E],
+                next_state: State::ACCEPT,
+                rule: None,
+            });
         pt
     }
 
-    fn get_entries(&mut self, from: State) -> &mut Vec<ParseTableEntry> {
+    fn transitions_from(&mut self, from: State) -> &mut Vec<TransitionEntry> {
         if self.transitions.get(&from).is_none() {
             self.transitions.insert(from, Vec::new());
         }
         self.transitions.get_mut(&from).unwrap()
     }
 
-    fn insert(&mut self, from: State, matchers: &[Matcher], next_state: State, consume: bool) {
-        self.get_entries(from).push(ParseTableEntry {
-            matchers: matchers.to_vec(),
-            next_state,
-            consume,
-        })
-    }
-
-    fn take_terminals(matchers: &[Matcher]) -> Vec<Matcher> {
-        matchers
-            .iter()
-            .cloned()
-            .take_while(|m| m.is_terminal())
-            .collect::<Vec<_>>()
-    }
-
-    fn add_rule(&mut self, from: State, mut to: &[Matcher]) {
-        let mut state = from;
-        while to.len() > 0 {
-            let _to_vec = to.to_vec();
-            let prefix = ParseTable::take_terminals(to);
-            let prefix_len = prefix.len();
-            let non_term = to.get(prefix_len).cloned();
-            if let Some(Matcher::NT(next_state)) = non_term {
-                self.insert(state, &prefix, next_state, true);
-                state = next_state;
-            }
-            to = &to[..prefix_len + 1];
+    pub fn add_rule(&mut self, rule: ProductionRule) {
+        self.rules.push(rule.clone());
+        let ProductionRule { lhs, rhs } = rule;
+        let mut matchers = rhs.to_vec();
+        let transitions = self.transitions_from(lhs);
+        while matchers.len() > 0 {
+            let terminals_prefix = ParseTable::take_terminals(&matchers);
         }
     }
 
-    fn fill(&mut self) {
-        use State::*;
-        use TokenType::*;
-        use Matcher::*;
-
-        self.insert(START, &[EOT], ACCEPT, true);
-
-        self.add_rule(START, &[NT(program), EOT]);
-
-        // self.add_rule(program, &[NT(func_defs), EOT]);
-        //
-        // self.add_rule(func_defs, &[NT(func_def), NT(func_defs), EOT]);
-        // self.add_rule(func_defs, &[EOT]);
-        //
-        // self.add_rule(func_def, &[
-        //     Ex(Keyword, "fn"),
-        //     Ty(Ident),
-        //     Ty(LParen),
-        //     NT(param_list),
-        //     Ty(RParen),
-        //     NT(ret_ty),
-        //     Ty(LBrac),
-        //     NT(func_body),
-        //     Ty(RBrac),
-        //     EOT,
-        // ]);
+    fn next(&self, state: State, tokens: &[QuickToken]) -> (State, Option<ProductionRule>) {
+        let entries = match self.transitions.get(&state) {
+            None => return (State::REJECT, None),
+            Some(entries) => entries,
+        };
+        for TransitionEntry {
+            matchers, next_state, rule,
+        } in entries {
+            if ParseTable::matches(&matchers, tokens) {
+                return (*next_state, rule.clone());
+            }
+        }
+        (State::REJECT, None)
     }
 
     fn matches(matchers: &[Matcher], tokens: &[QuickToken]) -> bool {
         for (m, (ty, val)) in matchers.iter().zip(tokens) {
             let ok = match m {
-                Matcher::Ty(e_ty) =>
+                Matcher::T(e_ty) =>
                     e_ty == ty,
-                Matcher::Ex(e_ty, e_val) =>
+                Matcher::TT(e_ty, e_val) =>
                     e_ty == ty && e_val == val,
-                Matcher::EOT => false,
-                Matcher::NT(_) =>
+                Matcher::E => false,
+                Matcher::S(_) =>
                     panic!("Cannot match a non terminal to list of tokens: {:?}", m),
             };
             if !ok {
@@ -380,35 +245,49 @@ impl ParseTable {
         true
     }
 
-    fn next(&self, state: State, tokens: &[QuickToken]) -> (State, usize) {
-        let entries = match self.transitions.get(&state) {
-            None => return (State::REJECT, 0),
-            Some(entries) => entries,
-        };
-        for ParseTableEntry { matchers, next_state, consume } in entries {
-            if ParseTable::matches(&matchers, tokens) {
-                let n_consume = if consume {
-                    if let Some(Matcher::EOT) = matchers.last() {
-                        matchers.len() - 1
-                    }  else {
-                        matchers.len()
-                    }
-                } else {
-                    0
-                };
-                return (*next_state, n_consume);
-            }
+
+    fn take_terminals(matchers: &[Matcher]) -> Vec<Matcher> {
+        matchers
+            .iter()
+            .cloned()
+            .take_while(|m| m.is_terminal())
+            .collect::<Vec<_>>()
+    }
+}
+
+impl From<&[ProductionRule]> for ParseTable {
+    fn from(rules: &[ProductionRule]) -> Self {
+        let mut pt = ParseTable::new();
+        for rule in rules {
+            pt.add_rule(rule.clone());
         }
-        (State::REJECT, 0)
+        pt
     }
 }
 
 mod tests {
+    use Matcher::*;
+    use State::*;
+    use TokenType::*;
+
     use super::*;
 
     #[test]
     fn test_parse_table() {
-        let table = ParseTable::build();
-        println!("{:?}", table)
+        let test_grammar = production_rules! {
+            START   -> S(program);
+            program -> T(Ident);
+        };
+
+        let table = ParseTable::from(&test_grammar);
+        println!("{:?}", table);
+
+        let tokens = &[
+            (Ident, "ok"),
+        ];
+
+        assert_eq!(table.next(program, tokens).0, START);
+        assert_eq!(table.next(START, tokens).0, program);
+        assert_eq!(table.next(START, &[]).0, ACCEPT);
     }
 }

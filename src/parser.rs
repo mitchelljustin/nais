@@ -6,6 +6,7 @@ use crate::tokenizer::{Token, tokenize, TokenType, QuickToken};
 #[allow(unused)]
 mod ast;
 mod state;
+mod old_trans;
 
 
 #[derive(Debug)]
@@ -190,7 +191,7 @@ fn parse(tokens: &[Token]) -> Result<ast::Program, ParserError> {
     let mut state = State::START;
     let mut transitions = Vec::new();
     while state != State::ACCEPT && state != State::REJECT {
-        let (next_state, n_eat, emit) = state::state_transition(state, &tokens);
+        let (next_state, n_eat, emit) = old_trans::state_transition(state, &tokens);
         let (eaten_tokens, next_tokens) = tokens.split_at(n_eat);
         let transition = (state, eaten_tokens);
         if emit {
