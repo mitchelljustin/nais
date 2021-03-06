@@ -1,4 +1,3 @@
-
 const KEYWORDS: &[&str] = &[
     "fn",
     "let",
@@ -11,8 +10,7 @@ pub enum TokenizerError {
     UnrecognizedChar(usize, char),
 }
 
-
-#[derive(Debug, PartialEq,  Clone, Eq, Hash)]
+#[derive(Debug, PartialEq, Clone, Eq, Hash)]
 pub enum Token {
     Unknown(String),
 
@@ -71,7 +69,10 @@ impl From<char> for Token {
                 Token::Literal(ch.to_string()),
             'a'..='z' | 'A'..='Z' =>
                 Token::Ident(ch.to_string()),
-            '(' | ')' | '{' | '}' | '[' | ']' | '>' | '<' | ':' | ';' | ',' | '=' | '+' | '-' | '!' | '*' | '/' =>
+            '(' | ')' | '{' | '}' | '[' | ']' |
+            '=' | '<' | '>' |
+            '+' | '-' | '*' | '/' |
+            ':' | ';' | ',' | '!' | '.' =>
                 Token::Sym(ch),
             _ =>
                 Token::Unknown(ch.to_string()),

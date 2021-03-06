@@ -30,6 +30,8 @@ pub enum Symbol {
     params,
     param,
     ty,
+    ty_prim,
+    ty_name,
     ret_ty,
     if_stmt,
     while_stmt,
@@ -37,11 +39,10 @@ pub enum Symbol {
     cond,
     bin_op,
     cmp_op,
-    array_read,
-    array_target,
-    var_target,
+    array_item,
     var,
     literal,
+    r_arrow,
 
     undefined,
 }

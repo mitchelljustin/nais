@@ -19,45 +19,77 @@ pub fn grammar() -> Grammar {
         func_def -> "fn" Ident '(' param_list ')' ret_ty '{' func_body '}';
 
         param_list -> params;
-        // param_list -> ;
+        param_list -> ;
 
         // params -> param ',' params;
         params -> param;
 
         param -> Ident ':' ty;
 
-        ty -> "i32";
-        // ty -> '[' "i32" ';' literal ']';
+        ty -> ty_prim;
+        // ty -> ty_name;
+        ty -> '[' ty ';' Literal ']';
+        ty -> '*' ty;
 
-        ret_ty -> '-' '>' ty;
-        // ret_ty -> ;
+        ty_prim -> "i32";
+
+        // ty_name -> Ident;
+
+        ret_ty -> r_arrow ty;
+        ret_ty -> ;
+
+        r_arrow -> '-' '>';
 
         func_body -> local_defs stmts;
 
-        // local_defs -> local_def local_defs;
+        local_defs -> local_def local_defs;
         local_defs -> ;
 
-        // local_def -> "let" Ident ':' ty ';';
+        local_def -> "let" Ident ':' ty ';';
 
         stmts -> stmt stmts;
         stmts -> ;
 
-        stmt -> return_stmt;
-        // stmt -> assn ';';
-        // stmt -> expr ';';
+        stmt -> expr ';';
+        stmt -> assn ';';
+        stmt -> return_stmt ';';
         // stmt -> if_stmt;
         // stmt -> while_stmt;
 
-        return_stmt -> "return" expr ';';
+        expr -> '(' expr ')';
+        expr -> var;
+        expr -> literal;
+        expr -> bin_expr;
+        expr -> array_item;
+        expr -> func_call;
 
-        // assn -> assn_target '=' expr;
+        var -> Ident;
 
-        // assn_target -> var_target;
-        // assn_target -> array_target;
+        literal -> Literal;
 
-        // var_target -> Ident;
+        bin_expr -> expr bin_op expr;
 
-        // array_target -> Ident '[' expr ']';
+        bin_op -> '+';
+        bin_op -> '-';
+
+        array_item -> expr '[' expr ']';
+
+        func_call -> Ident '(' arg_list ')';
+
+        arg_list -> args;
+        arg_list -> ;
+
+        args -> arg ',' args;
+        args -> arg;
+
+        arg -> expr;
+
+        assn -> assn_target '=' expr;
+
+        assn_target -> var;
+        assn_target -> array_item;
+
+        return_stmt -> "return" expr;
 
         // if_stmt     -> "if" cond '{' stmts '}';
         // while_stmt  -> "while" cond '{' stmts '}';
@@ -65,23 +97,7 @@ pub fn grammar() -> Grammar {
         // cond -> expr cmp_op expr;
 
         // cmp_op -> '>';
-        // cmp_op -> EqEq;
+        // cmp_op -> '=' '=';
         // cmp_op -> '<';
-
-        // expr -> '(' expr ')';
-        expr -> var;
-        expr -> literal;
-        expr -> bin_expr;
-        // expr -> array_read;
-
-        bin_expr -> expr bin_op expr;
-
-        bin_op -> '+';
-        bin_op -> '-';
-
-        // array_read -> var '[' expr ']';
-
-        var -> Ident;
-        literal -> Literal;
     }
 }
