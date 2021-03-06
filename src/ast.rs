@@ -1,6 +1,6 @@
 #![allow(unused)]
 
-use crate::tokenizer::TokenType;
+use crate::tokenizer::Token;
 use crate::parser;
 use crate::parser::ParseTree;
 

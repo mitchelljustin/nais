@@ -27,7 +27,7 @@ pub fn grammar() -> Grammar {
         ty -> "i32";
         // ty -> '[' "i32" ';' literal ']';
 
-        ret_ty -> RArrow ty;
+        ret_ty -> '-' '>' ty;
         // ret_ty -> ;
 
         func_body -> local_defs stmts;

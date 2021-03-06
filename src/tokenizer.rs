@@ -1,5 +1,3 @@
-use std::fmt;
-use std::fmt::Formatter;
 
 const KEYWORDS: &[&str] = &[
     "fn",
@@ -9,140 +7,78 @@ const KEYWORDS: &[&str] = &[
 ];
 
 #[derive(Debug)]
-pub enum TokenizeError {
+pub enum TokenizerError {
     UnrecognizedChar(usize, char),
 }
 
-#[derive(Debug, PartialEq, Copy, Clone)]
-pub enum CharType {
-    Unknown,
 
-    Space,
-    Letter,
-    Digit,
+#[derive(Debug, PartialEq,  Clone, Eq, Hash)]
+pub enum Token {
+    Unknown(String),
 
-    RParen,
-    LParen,
-    LBrac,
-    RBrac,
-    LSqBrac,
-    RSqBrac,
+    Space(String),
+    Ident(String),
+    Keyword(String),
+    Literal(String),
 
-    GreaterThan,
-    LessThan,
-    Eq,
-
-    Colon,
-    Semi,
-    Comma,
-
-    Plus,
-    Minus,
-}
-
-impl From<char> for CharType {
-    fn from(ch: char) -> Self {
-        match ch {
-            '(' => CharType::LParen,
-            ')' => CharType::RParen,
-            '{' => CharType::LBrac,
-            '}' => CharType::RBrac,
-            '[' => CharType::LSqBrac,
-            ']' => CharType::RSqBrac,
-            '>' => CharType::GreaterThan,
-            '<' => CharType::LessThan,
-            ':' => CharType::Colon,
-            ';' => CharType::Semi,
-            ',' => CharType::Comma,
-            '=' => CharType::Eq,
-            '+' => CharType::Plus,
-            '-' => CharType::Minus,
-            '\t' | '\n' | '\x0C' | '\r' | ' ' => CharType::Space,
-            '0'..='9' => CharType::Digit,
-            'a'..='z' | 'A'..='Z' => CharType::Letter,
-            _ => return CharType::Unknown,
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Copy, Clone, Eq, Hash)]
-pub enum TokenType {
-    Unknown,
+    Sym(char),
 
     EOF,
-
-    Space,
-    Ident,
-    Keyword,
-    Literal,
-
-    RParen,
-    LParen,
-    LBrac,
-    RBrac,
-    LSqBrac,
-    RSqBrac,
-
-    RArrow,
-
-    Colon,
-    Semi,
-    Comma,
-
-    Eq,
-
-    Plus,
-    Minus,
-
-    EqEq,
-    LessThan,
-    GreaterThan,
 }
 
+pub fn keyword(s: &str) -> Token {
+    Token::Keyword(s.to_string())
+}
 
-impl From<CharType> for TokenType {
-    fn from(ch_ty: CharType) -> Self {
-        match ch_ty {
-            CharType::Space => TokenType::Space,
-            CharType::Letter => TokenType::Ident,
-            CharType::Digit => TokenType::Literal,
-            CharType::LParen => TokenType::LParen,
-            CharType::RParen => TokenType::RParen,
-            CharType::LBrac => TokenType::LBrac,
-            CharType::RBrac => TokenType::RBrac,
-            CharType::LSqBrac => TokenType::LSqBrac,
-            CharType::RSqBrac => TokenType::RSqBrac,
-            CharType::LessThan => TokenType::LessThan,
-            CharType::GreaterThan => TokenType::GreaterThan,
-            CharType::Colon => TokenType::Colon,
-            CharType::Semi => TokenType::Semi,
-            CharType::Comma => TokenType::Comma,
-            CharType::Eq => TokenType::Eq,
-            CharType::Plus => TokenType::Plus,
-            CharType::Minus => TokenType::Minus,
-            _ => TokenType::Unknown,
+pub fn ident(s: &str) -> Token {
+    Token::Ident(s.to_string())
+}
+
+pub fn literal(s: &str) -> Token {
+    Token::Literal(s.to_string())
+}
+
+impl Token {
+    fn val_mut(&mut self) -> Option<&mut String> {
+        match self {
+            Token::Space(x) |
+            Token::Ident(x) |
+            Token::Keyword(x) |
+            Token::Literal(x) => Some(x),
+            _ => None,
+        }
+    }
+
+    pub fn push(&mut self, ch: char) {
+        if let Some(val) = self.val_mut() {
+            val.push(ch);
+        }
+    }
+
+    pub fn clear(&mut self) {
+        if let Some(val) = self.val_mut() {
+            val.clear();
         }
     }
 }
 
-impl From<char> for TokenType {
+impl From<char> for Token {
     fn from(ch: char) -> Self {
-        TokenType::from(CharType::from(ch))
+        match ch {
+            '\t' | '\n' | '\x0C' | '\r' | ' ' =>
+                Token::Space(ch.to_string()),
+            '0'..='9' =>
+                Token::Literal(ch.to_string()),
+            'a'..='z' | 'A'..='Z' =>
+                Token::Ident(ch.to_string()),
+            '(' | ')' | '{' | '}' | '[' | ']' | '>' | '<' | ':' | ';' | ',' | '=' | '+' | '-' | '!' | '*' | '/' =>
+                Token::Sym(ch),
+            _ =>
+                Token::Unknown(ch.to_string()),
+        }
     }
 }
 
-
-#[derive(PartialEq, Clone)]
-pub struct Token {
-    pub(crate) ty: TokenType,
-    pub(crate) val: String,
-}
-
-impl fmt::Debug for Token {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?} \"{}\"", self.ty, self.val)
-    }
-}
 
 pub fn dump_tokens(tokens: &[Token]) -> String {
     tokens
@@ -153,57 +89,22 @@ pub fn dump_tokens(tokens: &[Token]) -> String {
 }
 
 
-enum Decision {
-    Append,
-    UpdateType(TokenType),
-    Cut,
-}
-
-fn decide_token(tok_ty: TokenType, ch_ty: CharType) -> Decision {
-    use Decision::*;
-    match (tok_ty, ch_ty) {
-        // Same type
-        (TokenType::Space, CharType::Space) => Append,
-
-        (TokenType::Ident, CharType::Letter) => Append,
-        (TokenType::Ident, CharType::Digit) => Append,
-
-        (TokenType::Literal, CharType::Digit) => Append,
-
-        (TokenType::Eq,     CharType::Eq) =>
-            UpdateType(TokenType::EqEq),
-        (TokenType::Minus,  CharType::GreaterThan) =>
-            UpdateType(TokenType::RArrow),
-
-        (_, _) => Cut,
-    }
-}
-
-pub fn tokenize(text: &str) -> Result<Vec<Token>, TokenizeError> {
+pub fn tokenize(text: &str) -> Result<Vec<Token>, TokenizerError> {
     let mut tokens = Vec::new();
 
-    let mut tok = Token { ty: TokenType::Space, val: String::new() };
+    let mut tok = Token::Unknown("".to_string());
     for (i, ch) in text.chars().enumerate() {
-        let ch_ty = match CharType::from(ch) {
-            CharType::Unknown => return Err(TokenizeError::UnrecognizedChar(i, ch)),
-            ch_ty => ch_ty,
-        };
-        let decision = decide_token(tok.ty, ch_ty);
-        match decision {
-            Decision::Append => {
-                tok.val.push(ch);
-            }
-            Decision::UpdateType(new_ty) => {
-                tok.val.push(ch);
-                tok.ty = new_ty;
-            }
-            Decision::Cut => {
-                if tok.ty == TokenType::Ident && KEYWORDS.contains(&tok.val.as_str()) {
-                    tok.ty = TokenType::Keyword;
-                }
-                tokens.push(tok);
-                let ty = TokenType::from(ch_ty);
-                tok = Token { ty, val: ch.to_string() };
+        match (&tok, Token::from(ch)) {
+            (_, Token::Unknown(_)) =>
+                return Err(TokenizerError::UnrecognizedChar(i, ch)),
+            (Token::Space(_), Token::Space(_)) |
+            (Token::Ident(_), Token::Ident(_)) |
+            (Token::Ident(_), Token::Literal(_)) |
+            (Token::Literal(_), Token::Literal(_)) =>
+                tok.push(ch), // append
+            (_, new) => {
+                tokens.push(tok); // cut
+                tok = new;
             }
         }
     }
@@ -211,44 +112,35 @@ pub fn tokenize(text: &str) -> Result<Vec<Token>, TokenizeError> {
     Ok(
         tokens
             .into_iter()
-            .filter(|t| t.ty != TokenType::Space)
+            .filter(|t| match t {
+                Token::Space(_) => false,
+                _ => true,
+            })
             .collect()
     )
 }
 
 mod tests {
     use super::*;
-    use super::TokenType::*;
-
-    fn make_tokens(toks: &[(TokenType, &str)]) -> Vec<Token> {
-        toks.into_iter()
-            .map(|(ty, val)| Token { ty: *ty, val: val.to_string() })
-            .collect()
-    }
-
-    fn gen_dump(toks: &[(TokenType, &str)]) -> String {
-        dump_tokens(&make_tokens(toks))
-    }
+    use super::Token::*;
 
     #[test]
-    fn test_minimal_program() {
+    fn test_minimal_program() -> Result<(), TokenizerError> {
         let text = "fn main() { }";
-        let tokens = match tokenize(text) {
-            Err(e) => panic!("Tokenizer error: {:?}", e),
-            Ok(tokens) => tokens
-        };
-        assert_eq!(dump_tokens(&tokens), gen_dump(&[
-            (Keyword, "fn"),
-            (Ident, "main"),
-            (LParen, "("),
-            (RParen, ")"),
-            (LBrac, "{"),
-            (RBrac, "}"),
+        let tokens = tokenize(text)?;
+        assert_eq!(dump_tokens(&tokens), dump_tokens(&[
+            keyword("fn"),
+            ident("main"),
+            Sym('('),
+            Sym(')'),
+            Sym('{'),
+            Sym('}'),
         ]));
+        Ok(())
     }
 
     #[test]
-    fn test_multi_fn() -> Result<(), TokenizeError> {
+    fn test_multi_fn() -> Result<(), TokenizerError> {
         let text = "
         fn main(x: i32)
         {
@@ -262,22 +154,19 @@ mod tests {
             return y + 34;
         }
         ";
-        let tokens = match tokenize(text) {
-            Err(e) => panic!("Tokenizer error: {:?}", e),
-            Ok(tokens) => tokens
-        };
-        assert_eq!(dump_tokens(&tokens), gen_dump(&[
-            (Keyword, "fn"), (Ident, "main"), (LParen, "("), (Ident, "x"), (Colon, ":"), (Keyword, "i32"), (RParen, ")"),
-            (LBrac, "{"),
-            (Keyword, "let"), (Ident, "x1"), (Colon, ":"), (Keyword, "i32"), (Semi, ";"),
-            (Ident, "x1"), (Eq, "="), (Ident, "add34"), (LParen, "("), (Ident, "x"), (RParen, ")"), (Semi, ";"),
-            (Ident, "print"), (LParen, "("), (Ident, "x1"), (RParen, ")"), (Semi, ";"),
-            (RBrac, "}"),
-            (Keyword, "fn"), (Ident, "add34"), (LParen, "("), (Ident, "y"), (Colon, ":"), (Keyword, "i32"), (RParen, ")"),
-                (RArrow, "->"), (Keyword, "i32"),
-            (LBrac, "{"),
-            (Keyword, "return"), (Ident, "y"), (Plus, "+"), (Literal, "34"), (Semi, ";"),
-            (RBrac, "}"),
+        let tokens = tokenize(text)?;
+        assert_eq!(dump_tokens(&tokens), dump_tokens(&[
+            keyword("fn"), ident("main"), Sym('('), ident("x"), Sym(':'), keyword("i32"), Sym(')'),
+            Sym('{'),
+            keyword("let"), ident("x1"), Sym(':'), keyword("i32"), Sym(';'),
+            ident("x1"), Sym('='), ident("add34"), Sym('('), ident("x"), Sym(')'), Sym(';'),
+            ident("print"), Sym('('), ident("x1"), Sym(')'), Sym(';'),
+            Sym('}'),
+            keyword("fn"), ident("add34"), Sym('('), ident("y"), Sym(':'), keyword("i32"), Sym(')'),
+            Sym('-'), Sym('>'), keyword("i32"),
+            Sym('{'),
+            keyword("return"), ident("y"), Sym('+'), literal("34"), Sym(';'),
+            Sym('}'),
         ]));
         Ok(())
     }
@@ -286,7 +175,7 @@ mod tests {
     fn test_bad_char() {
         let text = "fn main()` { }";
         match tokenize(text) {
-            Err(TokenizeError::UnrecognizedChar(9, '`')) => {}
+            Err(TokenizerError::UnrecognizedChar(9, '`')) => {}
             Err(other) => panic!("Got some other error: {:?}", other),
             Ok(tokens) => panic!("Got tokens: {:?}", tokens),
         };

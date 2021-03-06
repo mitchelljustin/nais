@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 
-use crate::tokenizer::{Token, TokenType};
+use crate::tokenizer::Token;
 
 #[allow(non_camel_case_types, unused)]
 #[derive(Copy, Clone, PartialEq, Debug, Eq, Hash)]
@@ -42,22 +42,25 @@ pub enum Symbol {
     var_target,
     var,
     literal,
+
+    undefined,
 }
 
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum TokenMatcher {
-    Type(TokenType),
-    TypeAndVal(TokenType, String),
+pub struct TokenMatcher {
+    token: Token,
+    exact_val: bool,
 }
 
 impl TokenMatcher {
-    pub fn matches(&self, Token { ty, val }: &Token) -> bool {
-        match self {
-            TokenMatcher::Type(e_ty) =>
-                e_ty == ty,
-            TokenMatcher::TypeAndVal(e_ty, e_val) =>
-                e_ty == ty && e_val == val,
+    pub fn matches(&self, tok: &Token) -> bool {
+        if self.exact_val {
+            let mut tok = tok.clone();
+            tok.clear();
+            self.token == tok
+        } else {
+            &self.token == tok
         }
     }
 
@@ -84,33 +87,33 @@ impl Matcher {
     }
 }
 
-impl From<char> for Matcher {
-    fn from(ch: char) -> Self {
-        Matcher::Term(TokenMatcher::TypeAndVal(
-            TokenType::from(ch),
-            ch.to_string(),
-        ))
-    }
-}
-
 impl From<Symbol> for Matcher {
     fn from(symbol: Symbol) -> Self {
         Matcher::NonTerm(symbol)
     }
 }
 
-impl From<&str> for Matcher {
-    fn from(keyword: &str) -> Self {
-        Matcher::Term(TokenMatcher::TypeAndVal(
-            TokenType::Keyword,
-            keyword.to_string(),
-        ))
+impl From<char> for Matcher {
+    fn from(ch: char) -> Self {
+        Matcher::Term(TokenMatcher {
+            token: Token::from(ch),
+            exact_val: true,
+        })
     }
 }
 
-impl From<TokenType> for Matcher {
-    fn from(ty: TokenType) -> Self {
-        Matcher::Term(TokenMatcher::Type(ty))
+impl From<&str> for Matcher {
+    fn from(keyword: &str) -> Self {
+        Matcher::Term(TokenMatcher {
+            token: Token::Keyword(keyword.to_string()),
+            exact_val: true,
+        })
+    }
+}
+
+impl From<TokenMatcher> for Matcher {
+    fn from(tm: TokenMatcher) -> Self {
+        Matcher::Term(tm)
     }
 }
 
@@ -120,7 +123,25 @@ pub struct ProductionRule {
     pub rhs: Vec<Matcher>,
 }
 
+pub const DUMMY_RULE: ProductionRule = ProductionRule{
+    lhs: Symbol::undefined,
+    rhs: vec![],
+};
+
 pub type Grammar = Vec<ProductionRule>;
+
+macro_rules! gen_token_type_matchers {
+    (
+        $( $ty:ident )+
+    ) => {
+        $(
+            let $ty: TokenMatcher = TokenMatcher {
+                token: Token:: $ty(String::new()),
+                exact_val: false,
+            };
+        )+
+    };
+}
 
 #[macro_export]
 macro_rules! production_rules {
@@ -132,11 +153,16 @@ macro_rules! production_rules {
             use crate::parser::table::Symbol::*;
             #[allow(unused)]
             use crate::parser::table::Matcher::*;
-            #[allow(unused)]
-            use crate::tokenizer::TokenType::*;
 
-            use crate::parser::table::Matcher;
-            use crate::parser::table::ProductionRule;
+            use crate::tokenizer::Token;
+            use crate::parser::table::{Matcher, TokenMatcher, ProductionRule};
+
+            gen_token_type_matchers!(Ident Literal);
+
+            let EOF: TokenMatcher = TokenMatcher {
+                token: Token::EOF,
+                exact_val: false,
+            };
 
             vec![
                 $(
@@ -159,7 +185,7 @@ impl From<Matcher> for Option<TokenMatcher> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Transition {
     pattern: Vec<TokenMatcher>,
     rule: ProductionRule,
@@ -207,10 +233,28 @@ impl ParseTable {
             })
             .cloned()
             .collect::<Vec<_>>();
+        let n_terminals = term_prefix.len();
         self.transitions_from(rule.lhs).push(Transition {
             pattern: term_prefix,
             rule: rule.clone(),
         });
+        let first_nonterm = rule.rhs.get(n_terminals);
+        // TODO: cascade back
+    }
+
+    pub fn finish(&self) {
+        for (symbol, transitions) in self.transition_tab.iter() {
+            let mut done = HashSet::<(usize, usize)>::new();
+            for (i1, t1) in transitions.iter().enumerate() {
+                for (i2, t2) in transitions.iter().enumerate() {
+                    if i1 != i2 && t1.pattern == t2.pattern && !done.contains(&(i2, i1)) {
+                        println!("WARNING: Ambiguous transitions from {:?}: {:?} -> {:?} and {:?}",
+                            symbol, t1.pattern, t1.rule.rhs, t2.rule.rhs);
+                        done.insert((i1, i2));
+                    }
+                }
+            }
+        }
     }
 
     pub fn get(&self, symbol: &Symbol, input: &[Token]) -> Option<ProductionRule> {
@@ -230,6 +274,7 @@ impl From<Grammar> for ParseTable {
         for rule in grammar.into_iter() {
             table.add_rule(rule);
         }
+        table.finish();
         table
     }
 }
