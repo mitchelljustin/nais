@@ -1,10 +1,11 @@
-use crate::parser::table::{Grammar, ParseTable};
+use crate::parser::Parser;
+use crate::parser::table::Grammar;
 
-pub(crate) fn parse_table() -> ParseTable {
-    ParseTable::from(grammar())
+pub fn parser() -> Parser {
+    Parser::from(grammar())
 }
 
-pub(crate) fn grammar() -> Grammar {
+pub fn grammar() -> Grammar {
     production_rules! {
         START -> program EOF;
 
@@ -16,7 +17,7 @@ pub(crate) fn grammar() -> Grammar {
         func_def -> "fn" Ident '(' param_list ')' ret_ty '{' func_body '}';
 
         param_list -> params;
-        // param_list ->;
+        // param_list -> ;
 
         // params -> param ',' params;
         params -> param;
@@ -27,7 +28,7 @@ pub(crate) fn grammar() -> Grammar {
         // ty -> '[' "i32" ';' literal ']';
 
         ret_ty -> RArrow ty;
-        // ret_ty ->;
+        // ret_ty -> ;
 
         func_body -> local_defs stmts;
 
@@ -37,7 +38,7 @@ pub(crate) fn grammar() -> Grammar {
         // local_def -> "let" Ident ':' ty ';';
 
         stmts -> stmt stmts;
-        stmts ->;
+        stmts -> ;
 
         stmt -> return_stmt;
         // stmt -> assn ';';
@@ -81,8 +82,4 @@ pub(crate) fn grammar() -> Grammar {
         var -> Ident;
         literal -> Literal;
     }
-}
-
-fn add5(x: i32) -> i32 {
-    return x + 5;
 }

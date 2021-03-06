@@ -1,11 +1,10 @@
 use std::collections::HashMap;
-use std::fmt;
 use std::fmt::Debug;
 
 use crate::tokenizer::{Token, TokenType};
 
 #[allow(non_camel_case_types, unused)]
-#[derive(Copy, Clone, PartialEq, Debug, Hash, Eq)]
+#[derive(Copy, Clone, PartialEq, Debug, Eq, Hash)]
 pub enum Symbol {
     START,
 
@@ -46,8 +45,8 @@ pub enum Symbol {
 }
 
 
-#[derive(Debug, Clone)]
-enum TokenMatcher {
+#[derive(Debug, Clone, PartialEq)]
+pub enum TokenMatcher {
     Type(TokenType),
     TypeAndVal(TokenType, String),
 }
@@ -70,10 +69,19 @@ impl TokenMatcher {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Matcher {
     NonTerm(Symbol),
     Term(TokenMatcher),
+}
+
+impl Matcher {
+    fn is_terminal(&self) -> bool {
+        match self {
+            Matcher::Term(_) => true,
+            Matcher::NonTerm(_) => false,
+        }
+    }
 }
 
 impl From<char> for Matcher {
@@ -165,11 +173,10 @@ pub struct ParseTable {
 
 impl ParseTable {
     fn new() -> ParseTable {
-        let mut pt = ParseTable {
+        ParseTable {
             rules: Vec::new(),
             transition_tab: HashMap::new(),
-        };
-        pt
+        }
     }
 
     fn transitions_from(&mut self, symbol: Symbol) -> &mut Vec<Transition> {
@@ -177,13 +184,6 @@ impl ParseTable {
             self.transition_tab.insert(symbol, Vec::new());
         }
         self.transition_tab.get_mut(&symbol).unwrap()
-    }
-
-    fn add_transition(&mut self, symbol: Symbol, pattern: Vec<TokenMatcher>, rule: ProductionRule) {
-        self.transitions_from(symbol).push(Transition {
-            pattern,
-            rule,
-        });
     }
 
     /*
@@ -198,19 +198,25 @@ impl ParseTable {
 
     pub fn add_rule(&mut self, rule: ProductionRule) {
         self.rules.push(rule.clone());
-        let ProductionRule { lhs, mut rhs } = rule;
-        let prefix = rhs
+        let term_prefix = rule.rhs
             .iter()
             .take_while(|m| m.is_terminal())
+            .map(|m| match m {
+                Matcher::Term(tm) => tm,
+                Matcher::NonTerm(_) => panic!(),
+            })
             .cloned()
-            .filter_map(|m| Option::<TokenMatcher>::from(m))
             .collect::<Vec<_>>();
+        self.transitions_from(rule.lhs).push(Transition {
+            pattern: term_prefix,
+            rule: rule.clone(),
+        });
     }
 
-    pub fn lookup(&self, symbol: Symbol, tokens: &[Token]) -> Option<ProductionRule> {
-        let transitions = self.transition_tab.get(&symbol)?;
+    pub fn get(&self, symbol: &Symbol, input: &[Token]) -> Option<ProductionRule> {
+        let transitions = self.transition_tab.get(symbol)?;
         for t in transitions {
-            if TokenMatcher::slices_match(&t.pattern, tokens) {
+            if TokenMatcher::slices_match(&t.pattern, input) {
                 return Some(t.rule.clone());
             }
         }
@@ -225,35 +231,5 @@ impl From<Grammar> for ParseTable {
             table.add_rule(rule);
         }
         table
-    }
-}
-
-mod tests {
-    #![allow(unused_imports)]
-
-    use Matcher::*;
-    use Matcher::*;
-    use TokenType::*;
-
-    use super::*;
-
-    fn trivial_grammar() -> Grammar {
-        production_rules! {
-            START   -> program;
-            program -> '+' Literal;
-            program -> '+';
-        }
-    }
-
-    fn medium_grammar() -> Grammar {
-        production_rules! {
-            START -> program;
-
-            program -> "let" var '=' literal;
-            program -> ;
-
-            var -> Ident;
-            literal -> Literal;
-        }
     }
 }

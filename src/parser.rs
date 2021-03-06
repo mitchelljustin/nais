@@ -2,7 +2,7 @@ use table::Matcher;
 
 use crate::{ast, tokenizer};
 use crate::parser::ParserError::SyntaxError;
-use crate::parser::table::{ParseTable, ProductionRule, Symbol};
+use crate::parser::table::{Grammar, ParseTable, ProductionRule, Symbol};
 use crate::tokenizer::{Token, TokenType};
 
 #[macro_use]
@@ -13,8 +13,9 @@ mod minirust;
 #[derive(Debug)]
 enum ParserError {
     SyntaxError {
-        stack_left: Vec<Matcher>,
-        tokens_left: Vec<Token>,
+        top: Option<Matcher>,
+        stack: Vec<Matcher>,
+        input: Vec<Token>,
     },
 }
 
@@ -22,6 +23,7 @@ pub struct Parser {
     table: ParseTable,
 }
 
+#[derive(Debug)]
 pub enum ParseTree {
     Node {
         rule: ProductionRule,
@@ -33,20 +35,55 @@ pub enum ParseTree {
 }
 
 impl Parser {
-    fn parse(&self, tokens: &[Token]) -> Result<ParseTree, ParserError> {
+    fn parse(&self, input: &[Token]) -> Result<ParseTree, ParserError> {
         use table::Matcher::*;
 
-        let mut tokens = tokens.to_vec();
-        tokens.push(Token {
+        let mut input = input.to_vec();
+        input.push(Token {
             ty: TokenType::EOF,
             val: "$".to_string(),
         });
         let mut stack = vec![NonTerm(Symbol::START)];
-
-        Err(SyntaxError {
-            tokens_left: tokens.clone(),
-            stack_left: stack.clone(),
-        })
+        while !stack.is_empty() {
+            let top = match stack.pop() {
+                Some(top) => top,
+                _ => return Err(SyntaxError { top: None, input, stack }),
+            };
+            match &top {
+                Term(tm) => {
+                    println!("pop {:?}", tm);
+                    if input.is_empty() {
+                        return Err(SyntaxError { input, stack, top: Some(top.clone())});
+                    }
+                    let token = input.remove(0);
+                    if !tm.matches(&token) {
+                        return Err(SyntaxError { input, stack, top: Some(top.clone())});
+                    }
+                    // TODO: append token to tree
+                    println!("consume {:?}", token);
+                }
+                NonTerm(symbol) => {
+                    println!("pop {:?}", symbol);
+                    let rule = match self.table.get(symbol, &input) {
+                        Some(rule) => rule,
+                        None => return Err(SyntaxError { input, stack, top: Some(top.clone())}),
+                    };
+                    // TODO: append rule to try
+                    println!("append {:?}", rule.rhs);
+                    let mut new_matchers = rule.rhs;
+                    new_matchers.reverse();
+                    stack.extend_from_slice(&new_matchers);
+                }
+            }
+        }
+        Ok(
+            ParseTree::Terminal {
+                token: Token {
+                    ty: TokenType::Unknown,
+                    val: "?".to_string(),
+                }
+            }
+        )
     }
 }
 
@@ -56,32 +93,46 @@ impl From<ParseTable> for Parser {
     }
 }
 
+impl From<Grammar> for Parser {
+    fn from(grammar: Grammar) -> Self {
+        Parser::from(ParseTable::from(grammar))
+    }
+}
+
 fn parse(tokens: &[Token]) -> Result<ast::Node, ParserError> {
-    let parser = Parser::from(minirust::parse_table());
+    let parser = minirust::parser();
     let parse_tree = parser.parse(tokens)?;
     Ok(ast::Node::from(parse_tree))
 }
 
 
 mod tests {
+    use crate::parser::table::Grammar;
+
     use super::*;
 
+    fn medium_grammar() -> Grammar {
+        production_rules! {
+            START -> program;
+
+            program -> "let" var ':' ty '=' literal ';';
+            program -> ;
+
+            ty -> "i32";
+            ty -> '+';
+
+            var -> Ident;
+            literal -> Literal;
+        }
+    }
+
     #[test]
-    fn test_simple() {
-        let code = "
-            fn main() {
-                let x: i32;
-                x = 3;
-                return x;
-            }
-            fn f() -> i32 {
-                return 1;
-            }
-        ";
+    fn test_simple() -> Result<(), ParserError> {
+        let code = "let x: i32 = 5;";
         let tokens = tokenizer::tokenize(&code).unwrap();
-        let _program = match parse(&tokens) {
-            Err(e) => panic!("parser error: {:?}", e),
-            Ok(node) => node,
-        };
+        let parser = Parser::from(medium_grammar());
+        let node = parser.parse(&tokens)?;
+        println!("{:?}", node);
+        Ok(())
     }
 }
