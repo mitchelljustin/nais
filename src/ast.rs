@@ -1,7 +1,8 @@
 #![allow(unused)]
 
-use crate::parser::state::State;
 use crate::tokenizer::TokenType;
+use crate::parser;
+use crate::parser::ParseTree;
 
 #[derive(Debug)]
 pub struct Program {
@@ -59,17 +60,35 @@ pub struct Literal {
 pub enum BinOp {
     Add,
     Sub,
+
     Mul,
     Div,
     Rem,
+
     And,
     Or,
     Xor,
+
     Shl,
     Shr,
     Sar,
 }
 
-
 #[derive(Debug)]
-pub struct Builder {}
+pub enum Node {
+    Program(Program),
+    FuncDef(FuncDef),
+    VariableDef(VariableDef),
+    Literal(Literal),
+    Ty(Ty),
+    Stmt(Stmt),
+    AssnTarget(AssnTarget),
+    Expr(Expr),
+    BinOp(BinOp),
+}
+
+impl From<parser::ParseTree> for Node {
+    fn from(t: ParseTree) -> Self {
+        unimplemented!()
+    }
+}

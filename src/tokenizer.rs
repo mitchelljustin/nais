@@ -65,9 +65,11 @@ impl From<char> for CharType {
     }
 }
 
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq, Copy, Clone, Eq, Hash)]
 pub enum TokenType {
     Unknown,
+
+    EOF,
 
     Space,
     Ident,

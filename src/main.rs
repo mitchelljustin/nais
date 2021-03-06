@@ -13,6 +13,7 @@ mod assembler;
 mod encoder;
 mod tokenizer;
 mod parser;
+mod ast;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
