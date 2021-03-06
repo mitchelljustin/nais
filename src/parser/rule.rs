@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 
 use crate::tokenizer::Token;
+use crate::tokenizer;
 
 #[allow(non_camel_case_types, unused)]
 #[derive(Copy, Clone, PartialEq, Debug, Eq, Hash)]
@@ -9,6 +10,12 @@ pub enum Symbol {
     START,
 
     program,
+    program_items,
+    program_item,
+    type_def,
+    struct_def,
+    struct_def_items,
+    struct_def_item,
     func_body,
     local_defs,
     local_def,
@@ -24,7 +31,6 @@ pub enum Symbol {
     arg_list,
     args,
     arg,
-    func_defs,
     func_def,
     param_list,
     params,
@@ -32,6 +38,7 @@ pub enum Symbol {
     ty,
     ty_prim,
     ty_name,
+    ty_array,
     ret_ty,
     if_stmt,
     while_stmt,
@@ -40,6 +47,10 @@ pub enum Symbol {
     bin_op,
     cmp_op,
     array_item,
+    array_literal,
+    array_elems,
+    struct_literal,
+    struct_items,
     var,
     literal,
     r_arrow,
@@ -96,19 +107,18 @@ impl From<Symbol> for Matcher {
 
 impl From<char> for Matcher {
     fn from(ch: char) -> Self {
-        Matcher::Term(TokenMatcher {
-            token: Token::from(ch),
-            exact_val: true,
-        })
+        Matcher::from(ch.to_string().as_str())
     }
 }
 
 impl From<&str> for Matcher {
-    fn from(keyword: &str) -> Self {
-        Matcher::Term(TokenMatcher {
-            token: Token::Keyword(keyword.to_string()),
+    fn from(text: &str) -> Self {
+        let token = tokenizer::tokenize(text).unwrap().get(0).unwrap().to_owned();
+        let matcher = TokenMatcher {
+            token,
             exact_val: true,
-        })
+        };
+        Matcher::Term(matcher)
     }
 }
 

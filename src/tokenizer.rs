@@ -3,6 +3,12 @@ const KEYWORDS: &[&str] = &[
     "let",
     "return",
     "i32",
+    "struct",
+];
+
+const MULTI_CHAR_SYMS: &[&str] = &[
+    "->",
+    "==",
 ];
 
 #[derive(Debug)]
@@ -18,8 +24,7 @@ pub enum Token {
     Ident(String),
     Keyword(String),
     Literal(String),
-
-    Sym(char),
+    Sym(String),
 
     EOF,
 }
@@ -34,6 +39,10 @@ pub fn ident(s: &str) -> Token {
 
 pub fn literal(s: &str) -> Token {
     Token::Literal(s.to_string())
+}
+
+pub fn sym(s: &str) -> Token {
+    Token::Sym(s.to_string())
 }
 
 impl Token {
@@ -62,21 +71,21 @@ impl Token {
 
 impl From<char> for Token {
     fn from(ch: char) -> Self {
-        match ch {
+        (match ch {
             '\t' | '\n' | '\x0C' | '\r' | ' ' =>
-                Token::Space(ch.to_string()),
+                Token::Space,
             '0'..='9' =>
-                Token::Literal(ch.to_string()),
+                Token::Literal,
             'a'..='z' | 'A'..='Z' =>
-                Token::Ident(ch.to_string()),
+                Token::Ident,
             '(' | ')' | '{' | '}' | '[' | ']' |
             '=' | '<' | '>' |
             '+' | '-' | '*' | '/' |
             ':' | ';' | ',' | '!' | '.' =>
-                Token::Sym(ch),
+                Token::Sym,
             _ =>
-                Token::Unknown(ch.to_string()),
-        }
+                Token::Unknown,
+        })(ch.to_string())
     }
 }
 
@@ -95,7 +104,7 @@ pub fn tokenize(text: &str) -> Result<Vec<Token>, TokenizerError> {
 
     let mut tok = Token::Space("".to_string());
     for (i, ch) in text.chars().enumerate() {
-        match (&tok, Token::from(ch)) {
+        match (&tok, &Token::from(ch)) {
             (_, Token::Unknown(_)) =>
                 return Err(TokenizerError::UnrecognizedChar(i, ch)),
             (Token::Space(_), Token::Space(_)) |
@@ -103,14 +112,25 @@ pub fn tokenize(text: &str) -> Result<Vec<Token>, TokenizerError> {
             (Token::Ident(_), Token::Literal(_)) |
             (Token::Literal(_), Token::Literal(_)) =>
                 tok.push(ch), // append
-            (_, new) => {
-                if let Token::Ident(name) = &tok {
-                    if KEYWORDS.contains(&name.as_str()) {
-                        tok = Token::Keyword(name.clone())
-                    }
+            (Token::Sym(s1), Token::Sym(s2)) => {
+                let multi_char_sym = s1.clone() + s2;
+                if MULTI_CHAR_SYMS.contains(&multi_char_sym.as_str()) {
+                    tok = Token::Sym(multi_char_sym);
+                } else {
+                    tokens.push(tok);
+                    tok = Token::Sym(s2.clone());
                 }
-                tokens.push(tok); // cut
-                tok = new;
+            }
+            (Token::Ident(name), new) => {
+                if KEYWORDS.contains(&name.as_str()) {
+                    tok = Token::Keyword(name.clone())
+                }
+                tokens.push(tok);
+                tok = new.clone();
+            }
+            (_, new) => {
+                tokens.push(tok);
+                tok = new.clone();
             }
         }
     }
@@ -128,7 +148,6 @@ pub fn tokenize(text: &str) -> Result<Vec<Token>, TokenizerError> {
 
 mod tests {
     use super::*;
-    use super::Token::*;
 
     #[test]
     fn test_minimal_program() -> Result<(), TokenizerError> {
@@ -137,10 +156,10 @@ mod tests {
         assert_eq!(dump_tokens(&tokens), dump_tokens(&[
             keyword("fn"),
             ident("main"),
-            Sym('('),
-            Sym(')'),
-            Sym('{'),
-            Sym('}'),
+            sym("("),
+            sym(")"),
+            sym("{"),
+            sym("}"),
         ]));
         Ok(())
     }
@@ -162,17 +181,17 @@ mod tests {
         ";
         let tokens = tokenize(text)?;
         assert_eq!(dump_tokens(&tokens), dump_tokens(&[
-            keyword("fn"), ident("main"), Sym('('), ident("x"), Sym(':'), keyword("i32"), Sym(')'),
-            Sym('{'),
-            keyword("let"), ident("x1"), Sym(':'), keyword("i32"), Sym(';'),
-            ident("x1"), Sym('='), ident("add34"), Sym('('), ident("x"), Sym(')'), Sym(';'),
-            ident("print"), Sym('('), ident("x1"), Sym(')'), Sym(';'),
-            Sym('}'),
-            keyword("fn"), ident("add34"), Sym('('), ident("y"), Sym(':'), keyword("i32"), Sym(')'),
-            Sym('-'), Sym('>'), keyword("i32"),
-            Sym('{'),
-            keyword("return"), ident("y"), Sym('+'), literal("34"), Sym(';'),
-            Sym('}'),
+            keyword("fn"), ident("main"), sym("("), ident("x"), sym(":"), keyword("i32"), sym(")"),
+            sym("{"),
+            keyword("let"), ident("x1"), sym(":"), keyword("i32"), sym(";"),
+            ident("x1"), sym("="), ident("add34"), sym("("), ident("x"), sym(")"), sym(";"),
+            ident("print"), sym("("), ident("x1"), sym(")"), sym(";"),
+            sym("}"),
+            keyword("fn"), ident("add34"), sym("("), ident("y"), sym(":"), keyword("i32"), sym(")"),
+            sym("->"), keyword("i32"),
+            sym("{"),
+            keyword("return"), ident("y"), sym("+"), literal("34"), sym(";"),
+            sym("}"),
         ]));
         Ok(())
     }
