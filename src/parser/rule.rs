@@ -111,9 +111,26 @@ impl From<&str> for Matcher {
     }
 }
 
-impl From<TokenMatcher> for Matcher {
-    fn from(tm: TokenMatcher) -> Self {
-        Matcher::Term(tm)
+pub enum TokenMatcherTypeAlias {
+    Ident,
+    Literal,
+    EOF,
+}
+
+impl From<TokenMatcherTypeAlias> for Matcher {
+    fn from(alias: TokenMatcherTypeAlias) -> Self {
+        let matcher = TokenMatcher {
+            token: match alias {
+                TokenMatcherTypeAlias::Ident =>
+                    Token::Ident(String::new()),
+                TokenMatcherTypeAlias::Literal =>
+                    Token::Literal(String::new()),
+                TokenMatcherTypeAlias::EOF =>
+                    Token::EOF,
+            },
+            exact_val: false,
+        };
+        Matcher::Term(matcher)
     }
 }
 
@@ -123,25 +140,13 @@ pub struct ProductionRule {
     pub rhs: Vec<Matcher>,
 }
 
-pub const DUMMY_RULE: ProductionRule = ProductionRule{
+pub const _DUMMY_RULE: ProductionRule = ProductionRule {
     lhs: Symbol::undefined,
     rhs: vec![],
 };
 
 pub type Grammar = Vec<ProductionRule>;
 
-macro_rules! gen_token_type_matchers {
-    (
-        $( $ty:ident )+
-    ) => {
-        $(
-            let $ty: TokenMatcher = TokenMatcher {
-                token: Token:: $ty(String::new()),
-                exact_val: false,
-            };
-        )+
-    };
-}
 
 #[macro_export]
 macro_rules! production_rules {
@@ -150,19 +155,13 @@ macro_rules! production_rules {
     )+} => {
         {
             #[allow(unused)]
-            use crate::parser::table::Symbol::*;
+            use crate::parser::rule::Symbol::*;
             #[allow(unused)]
-            use crate::parser::table::Matcher::*;
+            use crate::parser::rule::Matcher::*;
+            #[allow(unused)]
+            use crate::parser::rule::TokenMatcherTypeAlias::*;
 
-            use crate::tokenizer::Token;
-            use crate::parser::table::{Matcher, TokenMatcher, ProductionRule};
-
-            gen_token_type_matchers!(Ident Literal);
-
-            let EOF: TokenMatcher = TokenMatcher {
-                token: Token::EOF,
-                exact_val: false,
-            };
+            use crate::parser::rule::{Matcher, ProductionRule};
 
             vec![
                 $(
@@ -238,7 +237,7 @@ impl ParseTable {
             pattern: term_prefix,
             rule: rule.clone(),
         });
-        let first_nonterm = rule.rhs.get(n_terminals);
+        let _first_nonterm = rule.rhs.get(n_terminals);
         // TODO: cascade back
     }
 
@@ -249,7 +248,7 @@ impl ParseTable {
                 for (i2, t2) in transitions.iter().enumerate() {
                     if i1 != i2 && t1.pattern == t2.pattern && !done.contains(&(i2, i1)) {
                         println!("WARNING: Ambiguous transitions from {:?}: {:?} -> {:?} and {:?}",
-                            symbol, t1.pattern, t1.rule.rhs, t2.rule.rhs);
+                                 symbol, t1.pattern, t1.rule.rhs, t2.rule.rhs);
                         done.insert((i1, i2));
                     }
                 }

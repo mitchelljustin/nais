@@ -1,10 +1,12 @@
 use crate::parser::Parser;
-use crate::parser::table::Grammar;
+use crate::parser::rule::Grammar;
 
+#[allow(unused)]
 pub fn parser() -> Parser {
     Parser::from(grammar())
 }
 
+#[allow(unused)]
 pub fn grammar() -> Grammar {
     production_rules! {
         START -> program EOF;

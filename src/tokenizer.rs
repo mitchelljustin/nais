@@ -92,7 +92,7 @@ pub fn dump_tokens(tokens: &[Token]) -> String {
 pub fn tokenize(text: &str) -> Result<Vec<Token>, TokenizerError> {
     let mut tokens = Vec::new();
 
-    let mut tok = Token::Unknown("".to_string());
+    let mut tok = Token::Space("".to_string());
     for (i, ch) in text.chars().enumerate() {
         match (&tok, Token::from(ch)) {
             (_, Token::Unknown(_)) =>
@@ -103,6 +103,11 @@ pub fn tokenize(text: &str) -> Result<Vec<Token>, TokenizerError> {
             (Token::Literal(_), Token::Literal(_)) =>
                 tok.push(ch), // append
             (_, new) => {
+                if let Token::Ident(name) = &tok {
+                    if KEYWORDS.contains(&name.as_str()) {
+                        tok = Token::Keyword(name.clone())
+                    }
+                }
                 tokens.push(tok); // cut
                 tok = new;
             }

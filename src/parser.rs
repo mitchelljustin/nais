@@ -1,12 +1,12 @@
-use table::Matcher;
+use rule::Matcher;
 
 use crate::{ast, tokenizer};
 use crate::parser::ParserError::SyntaxError;
-use crate::parser::table::{Grammar, ParseTable, ProductionRule, Symbol};
+use crate::parser::rule::{Grammar, ParseTable, ProductionRule, Symbol};
 use crate::tokenizer::Token;
 
 #[macro_use]
-mod table;
+mod rule;
 mod minirust;
 
 
@@ -36,7 +36,7 @@ pub enum ParseTree {
 
 impl Parser {
     fn parse(&self, input: &[Token]) -> Result<ParseTree, ParserError> {
-        use table::Matcher::*;
+        use rule::Matcher::*;
 
         let mut input = input.to_vec();
         input.push(Token::EOF);
@@ -53,7 +53,7 @@ impl Parser {
                         Some(rule) => rule,
                         None => return Err(SyntaxError { input, stack, top: Some(top.clone()) }),
                     };
-                    let new_node = ParseTree::Node {
+                    let _new_node = ParseTree::Node {
                         rule: rule.clone(),
                         children: vec![],
                     };
@@ -95,6 +95,7 @@ impl From<Grammar> for Parser {
     }
 }
 
+#[allow(unused)]
 fn parse(tokens: &[Token]) -> Result<ast::Node, ParserError> {
     let parser = minirust::parser();
     let parse_tree = parser.parse(tokens)?;
@@ -103,7 +104,7 @@ fn parse(tokens: &[Token]) -> Result<ast::Node, ParserError> {
 
 
 mod tests {
-    use crate::parser::table::Grammar;
+    use crate::parser::rule::Grammar;
 
     use super::*;
 
