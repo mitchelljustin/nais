@@ -3,21 +3,20 @@ use crate::parser::rule::Grammar;
 
 #[allow(unused)]
 pub fn parser() -> Parser {
-    Parser::from(grammar())
+    Parser::from(&grammar())
 }
 
 #[allow(unused)]
 pub fn grammar() -> Grammar {
     production_rules! {
-        START -> program EOF;
-
-        program -> program_items;
+        START -> program_items EOF;
 
         program_items -> program_item program_items;
         program_items -> ;
 
         program_item -> func_def;
-        program_item -> type_def;
+        program_item -> struct_def;
+        program_item -> const_def;
 
         func_def -> "fn" Ident '(' param_list ')' ret_ty '{' func_body '}';
 
@@ -49,15 +48,17 @@ pub fn grammar() -> Grammar {
 
         stmt -> expr ';';
         stmt -> assn ';';
-        stmt -> return_stmt ';';
         stmt -> if_stmt;
         stmt -> while_stmt;
+        stmt -> return_stmt ';';
 
-        expr -> '(' expr ')';
         expr -> Ident;
         expr -> Literal;
+        expr -> '(' expr ')';
         expr -> bin_expr;
+        expr -> deref;
         expr -> array_item;
+        expr -> struct_item;
         expr -> func_call;
         expr -> array_literal;
         expr -> struct_literal;
@@ -67,37 +68,42 @@ pub fn grammar() -> Grammar {
         bin_op -> '+';
         bin_op -> '-';
 
-        array_item -> expr '[' expr ']';
+        deref -> '*' expr;
+
+        array_item -> Ident '[' expr ']';
+
+        struct_item -> Ident '.' Ident;
 
         func_call -> Ident '(' arg_list ')';
 
         arg_list -> args;
         arg_list -> ;
 
-        args -> arg ',' args;
-        args -> arg;
+        args -> expr ',' args;
+        args -> expr;
 
-        arg -> expr;
+        array_literal -> '[' array_literal_elems ']';
 
-        array_literal -> '[' array_elems ']';
+        array_literal_elems -> expr ',' array_literal_elems;
+        array_literal_elems -> ;
 
-        array_elems -> expr ',' array_elems;
-        array_elems -> ;
+        struct_literal -> Ident '{' struct_literal_items '}';
 
-        struct_literal -> Ident '{' struct_items '}';
-
-        struct_items -> Ident ':' expr ',' struct_items;
-        struct_items -> ;
+        struct_literal_items -> Ident ':' expr ',' struct_literal_items;
+        struct_literal_items -> ;
 
         assn -> assn_target '=' expr;
 
         assn_target -> Ident;
+        assn_target -> deref;
         assn_target -> array_item;
-
-        return_stmt -> "return" expr;
+        assn_target -> struct_item;
 
         if_stmt     -> "if" cond '{' stmts '}';
+
         while_stmt  -> "while" cond '{' stmts '}';
+
+        return_stmt -> "return" expr;
 
         cond -> expr cmp_op expr;
 
@@ -105,13 +111,13 @@ pub fn grammar() -> Grammar {
         cmp_op -> "==";
         cmp_op -> '<';
 
-        type_def -> struct_def;
-
         struct_def -> "struct" '{' struct_def_items '}';
 
         struct_def_items -> struct_def_item struct_def_items;
         struct_def_items -> ;
 
         struct_def_item -> Ident ':' ty ',';
+
+        const_def -> "const" Ident ':' ty '=' Literal ';';
     }
 }

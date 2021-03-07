@@ -89,8 +89,8 @@ impl From<ParseTable> for Parser {
     }
 }
 
-impl From<Grammar> for Parser {
-    fn from(grammar: Grammar) -> Self {
+impl From<&Grammar> for Parser {
+    fn from(grammar: &Grammar) -> Self {
         Parser::from(ParseTable::from(grammar))
     }
 }
@@ -110,13 +110,9 @@ mod tests {
 
     fn medium_grammar() -> Grammar {
         production_rules! {
-            START -> program;
+            START -> expr EOF;
 
-            program -> expr;
-
-            expr -> literal '+' literal;
-
-            literal -> Literal;
+            expr -> expr '+' Literal;
         }
     }
 
@@ -124,7 +120,7 @@ mod tests {
     fn test_simple() -> Result<(), ParserError> {
         let code = "3 + 4";
         let tokens = tokenizer::tokenize(&code).unwrap();
-        let parser = Parser::from(medium_grammar());
+        let parser = Parser::from(&medium_grammar());
         let node = parser.parse(&tokens)?;
         println!("{:?}", node);
         Ok(())

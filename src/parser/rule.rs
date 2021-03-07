@@ -1,21 +1,21 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 
-use crate::tokenizer::Token;
 use crate::tokenizer;
+use crate::tokenizer::Token;
 
 #[allow(non_camel_case_types, unused)]
 #[derive(Copy, Clone, PartialEq, Debug, Eq, Hash)]
 pub enum Symbol {
     START,
 
-    program,
     program_items,
     program_item,
-    type_def,
+    func_def,
     struct_def,
     struct_def_items,
     struct_def_item,
+    const_def,
     func_body,
     local_defs,
     local_def,
@@ -31,14 +31,10 @@ pub enum Symbol {
     arg_list,
     args,
     arg,
-    func_def,
     param_list,
     params,
     param,
     ty,
-    ty_prim,
-    ty_name,
-    ty_array,
     ret_ty,
     if_stmt,
     while_stmt,
@@ -48,12 +44,11 @@ pub enum Symbol {
     cmp_op,
     array_item,
     array_literal,
-    array_elems,
+    array_literal_elems,
     struct_literal,
-    struct_items,
-    var,
-    literal,
-    r_arrow,
+    struct_literal_items,
+    struct_item,
+    deref,
 
     undefined,
 }
@@ -130,22 +125,22 @@ pub enum TokenMatcherTypeAlias {
 
 impl From<TokenMatcherTypeAlias> for Matcher {
     fn from(alias: TokenMatcherTypeAlias) -> Self {
-        let matcher = TokenMatcher {
-            token: match alias {
-                TokenMatcherTypeAlias::Ident =>
-                    Token::Ident(String::new()),
-                TokenMatcherTypeAlias::Literal =>
-                    Token::Literal(String::new()),
-                TokenMatcherTypeAlias::EOF =>
-                    Token::EOF,
-            },
-            exact_val: false,
+        let token = match alias {
+            TokenMatcherTypeAlias::Ident =>
+                Token::Ident(String::new()),
+            TokenMatcherTypeAlias::Literal =>
+                Token::Literal(String::new()),
+            TokenMatcherTypeAlias::EOF =>
+                Token::EOF,
         };
-        Matcher::Term(matcher)
+        Matcher::Term(TokenMatcher {
+            token,
+            exact_val: false,
+        })
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ProductionRule {
     pub lhs: Symbol,
     pub rhs: Vec<Matcher>,
@@ -195,6 +190,8 @@ impl From<Matcher> for Option<TokenMatcher> {
     }
 }
 
+const PATTERN_MAX_LEN: usize = 5;
+
 #[derive(Debug, Clone)]
 struct Transition {
     pattern: Vec<TokenMatcher>,
@@ -204,22 +201,22 @@ struct Transition {
 #[derive(Debug)]
 pub struct ParseTable {
     rules: Vec<ProductionRule>,
-    transition_tab: HashMap<Symbol, Vec<Transition>>,
+    transitions: HashMap<Symbol, Vec<Transition>>,
 }
 
 impl ParseTable {
     fn new() -> ParseTable {
         ParseTable {
             rules: Vec::new(),
-            transition_tab: HashMap::new(),
+            transitions: HashMap::new(),
         }
     }
 
-    fn transitions_from(&mut self, symbol: Symbol) -> &mut Vec<Transition> {
-        if self.transition_tab.get(&symbol).is_none() {
-            self.transition_tab.insert(symbol, Vec::new());
+    fn transitions_for(&mut self, symbol: Symbol) -> &mut Vec<Transition> {
+        if self.transitions.get(&symbol).is_none() {
+            self.transitions.insert(symbol, Vec::new());
         }
-        self.transition_tab.get_mut(&symbol).unwrap()
+        self.transitions.get_mut(&symbol).unwrap()
     }
 
     /*
@@ -232,9 +229,9 @@ impl ParseTable {
         literal -> Literal;
     */
 
-    pub fn add_rule(&mut self, rule: ProductionRule) {
-        self.rules.push(rule.clone());
-        let term_prefix = rule.rhs
+    pub fn add_rule(&mut self, rule: &ProductionRule) {
+        self.rules.push(rule.to_owned());
+        let terminals = rule.rhs
             .iter()
             .take_while(|m| m.is_terminal())
             .map(|m| match m {
@@ -243,17 +240,19 @@ impl ParseTable {
             })
             .cloned()
             .collect::<Vec<_>>();
-        let n_terminals = term_prefix.len();
-        self.transitions_from(rule.lhs).push(Transition {
-            pattern: term_prefix,
+        let pattern_len = terminals.len();
+        self.transitions_for(rule.lhs).push(Transition {
+            pattern: terminals,
             rule: rule.clone(),
         });
-        let _first_nonterm = rule.rhs.get(n_terminals);
-        // TODO: cascade back
+        if pattern_len < PATTERN_MAX_LEN {
+            let _first_nonterm = rule.rhs.get(pattern_len);
+
+        }
     }
 
     pub fn finish(&self) {
-        for (symbol, transitions) in self.transition_tab.iter() {
+        for (symbol, transitions) in self.transitions.iter() {
             let mut done = HashSet::<(usize, usize)>::new();
             for (i1, t1) in transitions.iter().enumerate() {
                 for (i2, t2) in transitions.iter().enumerate() {
@@ -268,23 +267,51 @@ impl ParseTable {
     }
 
     pub fn get(&self, symbol: &Symbol, input: &[Token]) -> Option<ProductionRule> {
-        let transitions = self.transition_tab.get(symbol)?;
-        for t in transitions {
-            if TokenMatcher::slices_match(&t.pattern, input) {
-                return Some(t.rule.clone());
+        let transitions = self.transitions.get(symbol)?;
+        for transition in transitions {
+            if TokenMatcher::slices_match(&transition.pattern, input) {
+                return Some(transition.rule.to_owned());
             }
         }
         None
     }
 }
 
-impl From<Grammar> for ParseTable {
-    fn from(grammar: Grammar) -> Self {
+impl From<&Grammar> for ParseTable {
+    fn from(grammar: &Grammar) -> Self {
         let mut table = ParseTable::new();
         for rule in grammar.into_iter() {
             table.add_rule(rule);
         }
         table.finish();
         table
+    }
+}
+
+
+mod tests {
+    use super::*;
+    use crate::tokenizer::ident;
+
+    #[test]
+    fn test_simple_grammar() {
+        let simple_grammar = production_rules! {
+            START -> expr EOF;
+
+            expr -> Ident;
+        };
+        let table = ParseTable::from(&simple_grammar);
+        assert_eq!(
+            table.get(&Symbol::START, &[Token::EOF]),
+            None,
+        );
+        assert_eq!(
+            table.get(&Symbol::START, &[ident("x"), Token::EOF]).as_ref(),
+            simple_grammar.get(0),
+        );
+        assert_eq!(
+            table.get(&Symbol::expr, &[ident("x"), Token::EOF]).as_ref(),
+            simple_grammar.get(1),
+        );
     }
 }

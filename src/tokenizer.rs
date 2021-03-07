@@ -1,14 +1,29 @@
 const KEYWORDS: &[&str] = &[
     "fn",
+    "i32",
     "let",
     "return",
-    "i32",
     "struct",
+    "if",
+    "while",
+    // FUTURE
+    "const",
+    "f32",
+    "u8",
 ];
 
 const MULTI_CHAR_SYMS: &[&str] = &[
     "->",
     "==",
+];
+
+const HEX_CHARS: &[char] = &[
+    'a',
+    'b',
+    'c',
+    'd',
+    'e',
+    'f',
 ];
 
 #[derive(Debug)]
@@ -107,11 +122,17 @@ pub fn tokenize(text: &str) -> Result<Vec<Token>, TokenizerError> {
         match (&tok, &Token::from(ch)) {
             (_, Token::Unknown(_)) =>
                 return Err(TokenizerError::UnrecognizedChar(i, ch)),
+
             (Token::Space(_), Token::Space(_)) |
             (Token::Ident(_), Token::Ident(_)) |
             (Token::Ident(_), Token::Literal(_)) |
-            (Token::Literal(_), Token::Literal(_)) =>
-                tok.push(ch), // append
+            (Token::Literal(_), Token::Literal(_))
+            => tok.push(ch), // append
+
+            (Token::Literal(s1), Token::Ident(s2))
+            if (s1 == "0" && s2 == "x") || HEX_CHARS.contains(&ch)
+            => tok.push(ch),
+
             (Token::Sym(s1), Token::Sym(s2)) => {
                 let multi_char_sym = s1.clone() + s2;
                 if MULTI_CHAR_SYMS.contains(&multi_char_sym.as_str()) {
@@ -183,16 +204,29 @@ mod tests {
         assert_eq!(dump_tokens(&tokens), dump_tokens(&[
             keyword("fn"), ident("main"), sym("("), ident("x"), sym(":"), keyword("i32"), sym(")"),
             sym("{"),
-            keyword("let"), ident("x1"), sym(":"), keyword("i32"), sym(";"),
-            ident("x1"), sym("="), ident("add34"), sym("("), ident("x"), sym(")"), sym(";"),
-            ident("print"), sym("("), ident("x1"), sym(")"), sym(";"),
+                keyword("let"), ident("x1"), sym(":"), keyword("i32"), sym(";"),
+                ident("x1"), sym("="), ident("add34"), sym("("), ident("x"), sym(")"), sym(";"),
+                ident("print"), sym("("), ident("x1"), sym(")"), sym(";"),
             sym("}"),
             keyword("fn"), ident("add34"), sym("("), ident("y"), sym(":"), keyword("i32"), sym(")"),
             sym("->"), keyword("i32"),
             sym("{"),
-            keyword("return"), ident("y"), sym("+"), literal("34"), sym(";"),
+                keyword("return"), ident("y"), sym("+"), literal("34"), sym(";"),
             sym("}"),
         ]));
+        Ok(())
+    }
+
+    #[test]
+    fn test_hex_literal() -> Result<(), TokenizerError> {
+        let text = "0x1234abcdef hello 0x123g";
+        let tokens = tokenize(text)?;
+        assert_eq!(tokens, &[
+            literal("0x1234abcdef"),
+            ident("hello"),
+            literal("0x123"),
+            ident("g"),
+        ]);
         Ok(())
     }
 
