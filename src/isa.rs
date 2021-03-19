@@ -136,7 +136,7 @@ pub mod env_call {
             }
             let mut data = vec![0; buf_len as usize];
             let result = match fd {
-                1 => io::stdin().read(data.as_mut_slice()),
+                1 => io::stdin().read(&mut data),
                 _ => return RetCode::NotImplemented as i32,
             };
             if let Err(_) = result {
@@ -283,14 +283,21 @@ branch_cmp_funcs! {
     bge ( >= );
 }
 
-pub fn sar(m: &mut Machine, shamt: i32) {
+pub fn sar(m: &mut Machine, _: i32) {
+    if let (Some(shamt), Some(val)) = (pop(m), pop(m)) {
+        let val = val >> shamt;
+        push(m, val);
+    }
+}
+
+pub fn sari(m: &mut Machine, shamt: i32) {
     if let Some(top) = pop(m) {
         let top = top >> shamt;
         push(m, top);
     }
 }
 
-macro_rules! logical_shift_funcs {
+macro_rules! logical_shift_imm_funcs {
     ( $($name:ident ($shop:tt));+; ) => {
         $(
             pub fn $name(m: &mut Machine, shamt: i32) {
@@ -304,6 +311,27 @@ macro_rules! logical_shift_funcs {
         )+
     };
 }
+
+logical_shift_imm_funcs! {
+    shli ( << );
+    shri ( >> );
+}
+
+macro_rules! logical_shift_funcs {
+    ( $($name:ident ($shop:tt));+; ) => {
+        $(
+            pub fn $name(m: &mut Machine, _: i32) {
+                if let (Some(shamt), Some(val)) = (pop(m), pop(m)) {
+                    let val1 = val as u32;
+                    let val2 = val1 $shop shamt;
+                    let val3 = val2 as i32;
+                    push(m, val3);
+                }
+            }
+        )+
+    };
+}
+
 
 logical_shift_funcs! {
     shl ( << );
@@ -361,9 +389,8 @@ macro_rules! def_op_list {
 def_op_list![
     invald
     push addsp
-    add sub mul div rem and or xor
-    addi subi muli divi remi andi ori xori
-    sar shl shr
+    add sub mul div rem and or xor sar shl shr
+    addi subi muli divi remi andi ori xori sari shli shri
     beq bne blt bge
     load store loadi storei loadf storef
     jump jal ret

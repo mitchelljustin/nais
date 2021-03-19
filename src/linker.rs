@@ -12,7 +12,7 @@ use crate::mem::{addrs, inst_loc_to_addr};
 pub struct DebugInfo {
     pub call_frames: HashMap<String, CallFrame>,
     pub frame_for_inst_addr: HashMap<i32, String>,
-    pub resolved_idents: HashMap<i32, ResolvedIdent>,
+    pub resolved_idents: HashMap<i32, ResolvedTarget>,
 }
 
 impl DebugInfo {
@@ -28,25 +28,27 @@ impl DebugInfo {
 impl From<Linker> for DebugInfo {
     fn from(linker: Linker) -> Self {
         let mut info = DebugInfo::new();
-        info.resolved_idents =      linker.resolved_idents;
-        info.call_frames =          linker.call_frames;
-        info.frame_for_inst_addr =  linker.frame_for_inst_addr;
+        info.resolved_idents = linker.resolved_targets;
+        info.call_frames = linker.call_frames;
+        info.frame_for_inst_addr = linker.frame_for_inst_addr;
         info
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum LabelType {
     GlobalConstant,
     Subroutine,
     InnerLabel,
     FrameVar,
+
+    _Literal,
 }
 
 #[derive(Clone)]
-pub struct ResolvedIdent {
+pub struct ResolvedTarget {
     pub inst_addr: i32,
-    pub target: String,
+    pub idents: Vec<String>,
     pub value: i32,
     pub label_type: LabelType,
 }
@@ -55,13 +57,13 @@ impl Display for LabelType {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             LabelType::GlobalConstant => "const",
-            LabelType::Subroutine =>     "sub",
-            LabelType::InnerLabel =>     "inner",
-            LabelType::FrameVar =>       "var",
+            LabelType::Subroutine => "sub",
+            LabelType::InnerLabel => "inner",
+            LabelType::FrameVar => "var",
+            _ => "",
         })
     }
 }
-
 
 #[derive(Clone)]
 pub struct CallFrame {
@@ -76,7 +78,7 @@ pub struct CallFrame {
 #[derive(Clone, Debug)]
 pub enum LinkerError {
     NeedToDefineEntryLabel,
-    MissingTarget(Inst, String),
+    MissingTarget(Inst, Vec<String>),
     NoSuchOp(i32, String),
 }
 
@@ -84,7 +86,7 @@ impl Display for LinkerError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             MissingTarget(inst, target) => {
-                write!(f, "MissingTarget({} \"{}\")", inst, target)
+                write!(f, "MissingTarget({} \"{:?}\")", inst, target)
             }
             other => write!(f, "{:?}", other)
         }
@@ -92,16 +94,23 @@ impl Display for LinkerError {
 }
 
 
+#[derive(Clone, Debug)]
+pub enum TargetTerm {
+    Ident(String),
+    Literal(i32),
+}
+
+pub type RelocationTarget = Vec<TargetTerm>;
+
 pub struct Linker {
     instructions: Vec<Inst>,
+    to_relocate: HashMap<usize, RelocationTarget>,
+    resolved_targets: HashMap<i32, ResolvedTarget>,
 
     call_frames: HashMap<String, CallFrame>,
     cur_frame_name: String,
     frame_for_inst_addr: HashMap<i32, String>,
-
     global_constants: HashMap<String, i32>,
-    to_relocate: HashMap<usize, String>,
-    resolved_idents: HashMap<i32, ResolvedIdent>,
 
     encoder: Encoder,
 
@@ -116,7 +125,7 @@ impl Linker {
             global_constants: HashMap::new(),
             frame_for_inst_addr: HashMap::new(),
             to_relocate: HashMap::new(),
-            resolved_idents: HashMap::new(),
+            resolved_targets: HashMap::new(),
             cur_frame_name: String::new(),
             encoder: Encoder::new(),
             errors: Vec::new(),
@@ -154,8 +163,8 @@ impl Linker {
         inst_loc_to_addr(self.next_inst_loc())
     }
 
-    pub fn add_placeholder_inst(&mut self, opname: &str, ident: &str) {
-        self.to_relocate.insert(self.next_inst_loc(), ident.to_string());
+    pub fn add_placeholder_inst(&mut self, opname: &str, target: RelocationTarget) {
+        self.to_relocate.insert(self.next_inst_loc(), target);
         self.add_inst(opname, 0);
     }
 
@@ -184,7 +193,7 @@ impl Linker {
         match self.call_frames.get(&self.cur_frame_name) {
             Some(_) => {
                 self.call_frames.get_mut(&self.cur_frame_name).unwrap()
-            },
+            }
             None => {
                 const DEFAULT_ENTRY_LABEL: &str = "_entry";
                 self.errors.push(LinkerError::NeedToDefineEntryLabel);
@@ -231,97 +240,114 @@ impl Linker {
         self.cur_frame_mut().addr_range.end = self.next_inst_addr();
     }
 
-    fn resolve_ident(&self, target: &str, inst_loc: usize) -> Option<ResolvedIdent> {
+    fn resolve_ident(&self, inst_loc: usize, name: &str) -> Option<(i32, LabelType)> {
+        use LabelType::*;
         let inst_addr = inst_loc_to_addr(inst_loc);
-        if let Some(entry) = self.resolved_idents.get(&inst_addr) {
-            return Some(entry.clone());
+        if let Some(&value) = self.global_constants.get(name) {
+            return Some((value, GlobalConstant));
         }
-        // Global constant
-        let target = target.to_string();
-        if let Some(&value) = self.global_constants.get(&target) {
-            return Some(ResolvedIdent {
-                inst_addr,
-                target,
-                value,
-                label_type: LabelType::GlobalConstant,
-            });
-        }
-        if let Some(frame) = self.call_frames.get(&target) {
+        if let Some(frame) = self.call_frames.get(name) {
             let value = Linker::offset_from_inst(
                 frame.addr_range.start,
                 inst_addr,
             );
-            return Some(ResolvedIdent {
-                inst_addr,
-                target,
-                value,
-                label_type: LabelType::Subroutine,
-            });
+            return Some((value, Subroutine));
         }
         // Local frame
-        let frame_name = match self.frame_for_inst_addr.get(&inst_addr) {
-            None => panic!(),
-            Some(x) => x,
-        };
+        let frame_name = self.frame_for_inst_addr.get(&inst_addr)?;
         let frame = self.call_frames.get(frame_name)?;
         // Local code (inner label)
-        if let Some(&addr) = frame.inner_labels.get(&target) {
+        if let Some(&addr) = frame.inner_labels.get(name) {
             let value = Linker::offset_from_inst(
                 addr,
                 inst_addr,
             );
-            return Some(ResolvedIdent {
-                inst_addr,
-                target,
-                value,
-                label_type: LabelType::InnerLabel,
-            });
+            return Some((value, InnerLabel));
         }
         // Local var
-        if let Some(&value) = frame.local_mappings.get(&target) {
-            return Some(ResolvedIdent {
-                inst_addr,
-                target,
-                value,
-                label_type: LabelType::FrameVar,
-            });
+        if let Some(&value) = frame.local_mappings.get(name) {
+            return Some((value, FrameVar));
         }
         None
     }
 
-    pub fn relocate(&mut self) -> Vec<(usize, String)> {
-        let mut unrelocated = Vec::<(usize, String)>::new();
+    fn resolve(&self, inst_loc: usize, target: &RelocationTarget) -> Result<ResolvedTarget, Vec<String>> {
+        let inst_addr = inst_loc_to_addr(inst_loc);
+        if let Some(entry) = self.resolved_targets.get(&inst_addr) {
+            return Ok(entry.clone());
+        }
+        // Global constant
+        let target = target.clone();
+        let (resolutions, unresolved): (Vec<_>, Vec<_>) = target
+            .iter()
+            .map(|t| match t {
+                TargetTerm::Ident(name) => self.resolve_ident(inst_loc, name).ok_or(name),
+                TargetTerm::Literal(x) => Ok((*x, LabelType::_Literal)),
+            })
+            .partition(|r| r.is_ok());
+        if !unresolved.is_empty() {
+            return Err(unresolved
+                .into_iter()
+                .map(|r| r.unwrap_err())
+                .cloned()
+                .collect());
+        }
+        let resolutions = resolutions.into_iter()
+            .map(|r| r.unwrap())
+            .collect::<Vec<_>>();
+        let value = resolutions.iter().map(|(v, _)| v).sum();
+        let label_type = resolutions[0].1;
+        let idents = target
+            .into_iter()
+            .filter_map(|t| match t {
+                TargetTerm::Ident(name) => Some(name),
+                TargetTerm::Literal(_) => None,
+            })
+            .collect();
+        Ok(ResolvedTarget {
+            inst_addr,
+            label_type,
+            idents,
+            value,
+        })
+    }
+
+    pub fn relocate(&mut self) -> Result<(), Vec<(usize, Vec<String>)>> {
+        let mut unrelocated = Vec::<(usize, Vec<String>)>::new();
         let mut inst_updates = Vec::<(usize, i32)>::new();
         for (inst_loc, target) in self.to_relocate.iter() {
             let inst_loc = *inst_loc;
             let inst_addr = inst_loc_to_addr(inst_loc);
-            match self.resolve_ident(target, inst_loc) {
-                Some(resolved) => {
+            match self.resolve(inst_loc, target) {
+                Ok(resolved) => {
                     inst_updates.push((inst_loc, resolved.value));
-                    self.resolved_idents.insert(inst_addr, resolved);
+                    self.resolved_targets.insert(inst_addr, resolved);
                 }
-                None => {
-                    unrelocated.push((inst_loc, target.clone()));
+                Err(unresolved) => {
+                    unrelocated.push((inst_loc, unresolved));
                 }
             }
         }
         for (loc, arg) in inst_updates.into_iter() {
             self.instructions[loc].arg = arg;
         }
-        unrelocated
+        if !unrelocated.is_empty() {
+            Err(unrelocated)
+        } else {
+            Ok(())
+        }
     }
 
     pub fn link_binary(&mut self) -> Result<Vec<i32>, Vec<LinkerError>> {
-        let mut errors: Vec<LinkerError> = self.errors
-            .drain(..)
-            .collect();
+        let mut errors: Vec<LinkerError> = self.errors.clone();
 
-        let unrelocated = self.relocate();
-        errors.extend(
-            unrelocated.into_iter()
-                .map(|(loc, target)|
-                    MissingTarget(self.instructions[loc], target.clone()))
-        );
+        if let Err(unrelocated) = self.relocate() {
+            errors.extend(unrelocated
+                .into_iter()
+                .map(|(loc, unresolved)|
+                    MissingTarget(self.instructions[loc], unresolved))
+            );
+        }
         if !errors.is_empty() {
             return Err(errors);
         }

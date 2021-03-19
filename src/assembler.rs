@@ -8,7 +8,7 @@ use AssemblyError::*;
 use ParserError::*;
 
 use crate::isa;
-use crate::linker::{DebugInfo, Linker, LinkerError};
+use crate::linker::{DebugInfo, Linker, LinkerError, TargetTerm};
 use crate::mem::addrs;
 
 pub enum AssemblyError {
@@ -46,11 +46,12 @@ pub enum ParserError {
     UnknownMacro { verb: String },
     WrongNumberOfArguments { verb: String, expected: RangeInclusive<usize>, actual: usize },
     InvalidIntegerArg(ParseIntError),
-    OnlyAsciiCharsSupported { char: String },
-    InstHasMultipleArgs { verb: String, args: Vec<String> },
+    OnlyAsciiCharsSupported { st: String },
+
+    MultipleErrors(Vec<ParserError>),
 
     UnknownError,
-    _NotAnIntegerArg,
+    _ArgIsIdent,
 }
 
 pub struct AssemblyResult {
@@ -155,40 +156,15 @@ impl Assembler {
             return Ok(());
         }
         let args = &words[1..];
-        if verb.starts_with(".") {
-            return self.process_macro(verb, args);
-        }
-        self.process_inst(verb, args)
+        self.process_statement(verb, args)
     }
 
-    fn process_inst(&mut self, verb: &str, args: &[&str]) -> Result<(), ParserError> {
-        match args {
-            [] => {
-                self.linker.add_inst(verb, 0);
-                Ok(())
-            },
-            [arg] => {
-                match Assembler::parse_integer(arg) {
-                    Ok(arg) => {
-                        self.linker.add_inst(verb, arg);
-                        Ok(())
-                    }
-                    Err(_NotAnIntegerArg) => {
-                        self.linker.add_placeholder_inst(verb, arg);
-                        Ok(())
-                    }
-                    Err(err) => Err(err),
-                }
-            }
-            _ => Err(InstHasMultipleArgs {
-                verb: verb.to_string(),
-                args: args.into_iter().map(|s| s.to_string()).collect(),
-            }),
-        }
-    }
-
-    fn process_macro(&mut self, verb: &str, args: &[&str]) -> Result<(), ParserError> {
+    fn process_statement(&mut self, verb: &str, args: &[&str]) -> Result<(), ParserError> {
         match verb {
+            ".define" => {
+                let (name, value) = Assembler::expect_name_and_literal(verb, args)?;
+                self.linker.add_global_constant(name, value);
+            }
             ".param" => {
                 let (name, size) = Assembler::expect_name_and_literal(verb, args)?;
                 self.linker.add_param(name, size);
@@ -199,32 +175,56 @@ impl Assembler {
                 self.linker.add_local_var(name, size);
                 self.linker.add_local_constant(&Assembler::var_size_name(name), size);
             }
-            ".define" => {
-                let (name, value) = Assembler::expect_name_and_literal(verb, args)?;
-                self.linker.add_global_constant(name, value);
-            }
             ".start_frame" => {
-                self.linker.add_placeholder_inst("loadi", "fp");
-
-                self.linker.add_placeholder_inst("loadi", "sp");
-                self.linker.add_placeholder_inst("storei", "fp");
+                self.process_inst("loadi", &["fp"])?;
+                self.process_inst("loadi", &["sp"])?;
+                self.process_inst("storei", &["fp"])?;
 
                 self.linker.add_inst("addsp", self.linker.cur_frame().locals_size);
             }
             ".end_frame" => {
                 self.linker.add_inst("addsp", -self.linker.cur_frame().locals_size);
 
-                self.linker.add_placeholder_inst("storei", "fp");
+                self.process_inst("storei", &["fp"])?;
             }
-            unknown => return Err(UnknownMacro { verb: unknown.to_string() })
+            opname => self.process_inst(opname, args)?,
         }
+        Ok(())
+    }
+
+    fn process_inst(&mut self, opname: &str, args: &[&str]) -> Result<(), ParserError> {
+        if args.is_empty() {
+            self.linker.add_inst(opname, 0);
+            return Ok(());
+        }
+        let (terms, errs): (Vec<_>, Vec<_>) = args
+            .iter()
+            .map(|arg| arg.strip_prefix(",").unwrap_or(arg))
+            .map(|arg| arg.strip_suffix(",").unwrap_or(arg))
+            .map(|arg| match Assembler::parse_integer(arg) {
+                Ok(literal) => Ok(TargetTerm::Literal(literal)),
+                Err(_ArgIsIdent) => Ok(TargetTerm::Ident(arg.to_string())),
+                Err(err) => Err(err),
+            })
+            .partition(|r| r.is_ok());
+        if !errs.is_empty() {
+            return Err(MultipleErrors(errs
+                .into_iter()
+                .map(|r| r.unwrap_err())
+                .collect()));
+        }
+        let target: Vec<_> = terms
+            .into_iter()
+            .map(|r| r.unwrap())
+            .collect();
+        self.linker.add_placeholder_inst(opname, target);
         Ok(())
     }
 
     fn parse_integer(arg: &str) -> Result<i32, ParserError> {
         if arg.starts_with("0x") {
-            return match i32::from_str_radix(&arg[2..], 16) {
-                Ok(arg) => Ok(arg),
+            return match u32::from_str_radix(&arg[2..], 16) {
+                Ok(arg) => Ok(arg as i32),
                 Err(err) => Err(InvalidIntegerArg(err)),
             };
         }
@@ -234,11 +234,11 @@ impl Assembler {
         if arg.len() == 3 && arg.starts_with("'") && arg.ends_with("'") {
             let char = &arg[1..2];
             if !char.is_ascii() {
-                return Err(OnlyAsciiCharsSupported { char: char.to_string() });
+                return Err(OnlyAsciiCharsSupported { st: char.to_string() });
             }
             return Ok(char.bytes().next().unwrap() as i32);
         }
-        Err(_NotAnIntegerArg)
+        Err(_ArgIsIdent)
     }
 
     fn expect_num_args<'a>(verb: &'a str, args: &'a [&'a str], expected: RangeInclusive<usize>)

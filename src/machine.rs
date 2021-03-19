@@ -9,8 +9,8 @@ use MachineStatus::*;
 
 use crate::encoder::Encoder;
 use crate::isa::Inst;
-use crate::linker::{DebugInfo, ResolvedIdent};
-use crate::mem::{addrs, segs, inst_loc_to_addr, Memory};
+use crate::linker::{DebugInfo, ResolvedTarget};
+use crate::mem::{addrs, inst_loc_to_addr, Memory, segs};
 use crate::util;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -246,8 +246,8 @@ impl Machine {
                 }
             };
             match self.debug_info.resolved_idents.get(&addr) {
-                Some(ResolvedIdent { target, label_type, .. }) => {
-                    write!(out, " {:12} {}", target, label_type).unwrap();
+                Some(ResolvedTarget { idents, label_type, .. }) => {
+                    write!(out, " {:12} {}", idents.first().unwrap_or(&"".to_string()), label_type).unwrap();
                 }
                 None => out.write_str(&" ".repeat(15)).unwrap(),
             }
@@ -261,7 +261,7 @@ impl Machine {
 
     pub fn frame_dump(&self) -> String {
         let fp = self.mem[addrs::FP];
-        self.stack_mem_dump(fp..self.getsp())
+        self.stack_mem_dump(fp - 8..self.getsp())
     }
 
     pub fn stack_dump_from(&self, offset: i32) -> String {
@@ -282,7 +282,7 @@ impl Machine {
                 .get(frame)
                 .unwrap()
                 .local_mappings.iter()
-                .map(|(name, off)| (off, name) )
+                .map(|(name, off)| (off, name))
                 .collect(),
             None => HashMap::new(),
         };
