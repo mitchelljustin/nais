@@ -130,7 +130,7 @@ pub mod env_call {
 
     macro_rules! def_env_call_list {
         ( $($name:ident)+ ) => {
-            pub const LIST: &[(fn(&mut Machine) -> i32, &'static str)] = &[
+            pub const CALL_LIST: &[(fn(&mut Machine) -> i32, &'static str)] = &[
                 $(
                     ($name, stringify!($name)),
                 )+
@@ -145,11 +145,11 @@ pub mod env_call {
 }
 
 pub fn ecall(m: &mut Machine, callcode: i32) {
-    if callcode < 0 || callcode >= env_call::LIST.len() as i32 {
+    if callcode < 0 || callcode >= env_call::CALL_LIST.len() as i32 {
         m.set_status(MachineStatus::Error(MachineError::NoSuchEnvCall(callcode)));
         return;
     }
-    let (env_call_func, _) = env_call::LIST[callcode as usize];
+    let (env_call_func, _) = env_call::CALL_LIST[callcode as usize];
     let retval = env_call_func(m);
     push(m, retval);
 }

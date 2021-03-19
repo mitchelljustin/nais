@@ -11,16 +11,16 @@ use crate::mem::{addrs, inst_loc_to_addr};
 #[derive(Clone)]
 pub struct DebugInfo {
     pub call_frames: HashMap<String, CallFrame>,
-    pub frame_name_for_inst: HashMap<i32, String>,
-    pub resolved_labels: HashMap<i32, ResolvedLabel>,
+    pub frame_for_inst_addr: HashMap<i32, String>,
+    pub resolved_idents: HashMap<i32, ResolvedIdent>,
 }
 
 impl DebugInfo {
     pub fn new() -> DebugInfo {
         DebugInfo {
             call_frames: HashMap::new(),
-            frame_name_for_inst: HashMap::new(),
-            resolved_labels: HashMap::new(),
+            frame_for_inst_addr: HashMap::new(),
+            resolved_idents: HashMap::new(),
         }
     }
 }
@@ -28,24 +28,23 @@ impl DebugInfo {
 impl From<Linker> for DebugInfo {
     fn from(linker: Linker) -> Self {
         let mut info = DebugInfo::new();
-        info.resolved_labels =      linker.resolved_labels;
+        info.resolved_idents =      linker.resolved_idents;
         info.call_frames =          linker.call_frames;
-        info.frame_name_for_inst =  linker.frame_name_for_inst;
+        info.frame_for_inst_addr =  linker.frame_for_inst_addr;
         info
     }
 }
 
 #[derive(Copy, Clone)]
 pub enum LabelType {
-    Constant,
-    GlobalVar,
+    GlobalConstant,
     Subroutine,
     InnerLabel,
     FrameVar,
 }
 
 #[derive(Clone)]
-pub struct ResolvedLabel {
+pub struct ResolvedIdent {
     pub inst_addr: i32,
     pub target: String,
     pub value: i32,
@@ -55,11 +54,10 @@ pub struct ResolvedLabel {
 impl Display for LabelType {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            LabelType::Constant =>      "const",
-            LabelType::GlobalVar =>     "glob",
-            LabelType::Subroutine =>    "sub",
-            LabelType::InnerLabel =>    "inner",
-            LabelType::FrameVar =>      "var",
+            LabelType::GlobalConstant => "const",
+            LabelType::Subroutine =>     "sub",
+            LabelType::InnerLabel =>     "inner",
+            LabelType::FrameVar =>       "var",
         })
     }
 }
@@ -96,14 +94,17 @@ impl Display for LinkerError {
 
 pub struct Linker {
     instructions: Vec<Inst>,
+
     call_frames: HashMap<String, CallFrame>,
-    frame_name_for_inst: HashMap<i32, String>,
     cur_frame_name: String,
-    global_vars: HashMap<String, i32>,
-    constants: HashMap<String, i32>,
-    reloc_tab: HashMap<usize, String>,
-    resolved_labels: HashMap<i32, ResolvedLabel>,
+    frame_for_inst_addr: HashMap<i32, String>,
+
+    global_constants: HashMap<String, i32>,
+    to_relocate: HashMap<usize, String>,
+    resolved_idents: HashMap<i32, ResolvedIdent>,
+
     encoder: Encoder,
+
     errors: Vec<LinkerError>,
 }
 
@@ -112,27 +113,19 @@ impl Linker {
         Linker {
             instructions: Vec::new(),
             call_frames: HashMap::new(),
-            global_vars: HashMap::new(),
-            constants: HashMap::new(),
-            frame_name_for_inst: HashMap::new(),
-            reloc_tab: HashMap::new(),
-            resolved_labels: HashMap::new(),
+            global_constants: HashMap::new(),
+            frame_for_inst_addr: HashMap::new(),
+            to_relocate: HashMap::new(),
+            resolved_idents: HashMap::new(),
             cur_frame_name: String::new(),
             encoder: Encoder::new(),
             errors: Vec::new(),
         }
     }
 
-    pub fn init(&mut self) {
-        self.add_global_var("pc", addrs::PC);
-        self.add_global_var("sp", addrs::SP);
-        self.add_global_var("fp", addrs::FP);
-        self.add_constant("retval", -3);
-    }
-
     pub fn add_inst(&mut self, opname: &str, arg: i32) {
         let addr = self.next_inst_addr();
-        self.frame_name_for_inst.insert(addr, self.cur_frame_name.clone());
+        self.frame_for_inst_addr.insert(addr, self.cur_frame_name.clone());
         match self.encoder.make_inst(opname, arg) {
             Some(inst) => {
                 self.instructions.push(Inst {
@@ -162,14 +155,14 @@ impl Linker {
     }
 
     pub fn add_placeholder_inst(&mut self, opname: &str, label: &str) {
-        self.reloc_tab.insert(self.next_inst_loc(), label.to_string());
+        self.to_relocate.insert(self.next_inst_loc(), label.to_string());
         self.add_inst(opname, 0);
     }
 
-    pub fn add_subroutine_label(&mut self, name: &str) {
+    pub fn add_subroutine(&mut self, name: &str) {
         let next_addr = self.next_inst_addr();
         if self.cur_frame_name != "" {
-            self.cur_frame().addr_range.end = next_addr;
+            self.cur_frame_mut().addr_range.end = next_addr;
         }
         self.call_frames.insert(name.to_string(), CallFrame {
             name: name.to_string(),
@@ -184,10 +177,10 @@ impl Linker {
 
     pub fn add_inner_label(&mut self, name: &str) {
         let addr = self.next_inst_addr();
-        self.cur_frame().inner_labels.insert(name.to_string(), addr);
+        self.cur_frame_mut().inner_labels.insert(name.to_string(), addr);
     }
 
-    fn cur_frame(&mut self) -> &mut CallFrame {
+    fn cur_frame_mut(&mut self) -> &mut CallFrame {
         match self.call_frames.get(&self.cur_frame_name) {
             Some(_) => {
                 self.call_frames.get_mut(&self.cur_frame_name).unwrap()
@@ -195,21 +188,18 @@ impl Linker {
             None => {
                 const DEFAULT_ENTRY_LABEL: &str = "_entry";
                 self.errors.push(LinkerError::NeedToDefineEntryLabel);
-                self.add_subroutine_label(DEFAULT_ENTRY_LABEL);
+                self.add_subroutine(DEFAULT_ENTRY_LABEL);
                 self.call_frames.get_mut(DEFAULT_ENTRY_LABEL).unwrap()
             }
         }
     }
 
-    pub fn add_global_var(&mut self, name: &str, abs_loc: i32) {
-        self.global_vars.insert(
-            String::from(name),
-            abs_loc,
-        );
+    pub fn cur_frame(&self) -> &CallFrame {
+        self.call_frames.get(&self.cur_frame_name).unwrap()
     }
 
     pub fn add_local_var(&mut self, name: &str, size: i32) {
-        let frame = self.cur_frame();
+        let frame = self.cur_frame_mut();
         frame.frame_labels.insert(
             name.to_string(),
             frame.locals_size,
@@ -218,7 +208,7 @@ impl Linker {
     }
 
     pub fn add_arg_var(&mut self, name: &str, size: i32) {
-        let frame = self.cur_frame();
+        let frame = self.cur_frame_mut();
         frame.frame_labels.insert(
             name.to_string(),
             -frame.args_size - 4, // [..args retval retaddr savedfp || locals ]
@@ -226,83 +216,54 @@ impl Linker {
         frame.args_size += size;
     }
 
-    pub fn add_constant(&mut self, name: &str, value: i32) {
-        self.constants.insert(String::from(name), value);
-    }
-
-    pub fn locals_alloc(&mut self) {
-        let extend_sz = self.cur_frame().locals_size;
-        if extend_sz > 0 {
-            self.add_inst("addsp", extend_sz);
-        }
-    }
-
-    pub fn locals_free(&mut self) {
-        let drop_sz = self.cur_frame().locals_size;
-        if drop_sz > 0 {
-            self.add_inst("addsp", -drop_sz);
-        }
+    pub fn add_global_constant(&mut self, name: &str, value: i32) {
+        self.global_constants.insert(name.to_string(), value);
     }
 
     pub fn finish(&mut self) {
-        self.cur_frame().addr_range.end = self.next_inst_addr();
+        self.cur_frame_mut().addr_range.end = self.next_inst_addr();
     }
 
-    fn resolve_label(&self, inst_loc: usize, target: &str) -> Option<ResolvedLabel> {
+    fn resolve_ident(&self, target: &str, inst_loc: usize) -> Option<ResolvedIdent> {
         let inst_addr = inst_loc_to_addr(inst_loc);
-        if let Some(entry) = self.resolved_labels.get(&inst_addr) {
+        if let Some(entry) = self.resolved_idents.get(&inst_addr) {
             return Some(entry.clone());
         }
-        // Constant
+        // Global constant
         let target = target.to_string();
-        if let Some(&value) = self.constants.get(&target) {
-            return Some(ResolvedLabel {
+        if let Some(&value) = self.global_constants.get(&target) {
+            return Some(ResolvedIdent {
                 inst_addr,
                 target,
                 value,
-                label_type: LabelType::Constant,
+                label_type: LabelType::GlobalConstant,
             });
         }
-        // Top level label
-        if let Some(label_entry) = self.call_frames.get(&target) {
-            let value = Linker::calc_inst_offset(
-                label_entry.addr_range.start,
+        if let Some(frame) = self.call_frames.get(&target) {
+            let value = Linker::offset_from_inst(
+                frame.addr_range.start,
                 inst_addr,
             );
-            return Some(ResolvedLabel {
+            return Some(ResolvedIdent {
                 inst_addr,
                 target,
                 value,
                 label_type: LabelType::Subroutine,
             });
         }
-        // Global variable
-        if let Some(&value) = self.global_vars.get(&target) {
-            return Some(ResolvedLabel {
-                inst_addr,
-                target,
-                value,
-                label_type: LabelType::GlobalVar,
-            });
-        }
         // Local frame
-        let frame_name = match self.frame_name_for_inst.get(&inst_addr) {
-            None => {
-                panic!();
-            },
+        let frame_name = match self.frame_for_inst_addr.get(&inst_addr) {
+            None => panic!(),
             Some(x) => x,
         };
-        let frame = match self.call_frames.get(frame_name) {
-            None => return None,
-            Some(f) => f,
-        };
+        let frame = self.call_frames.get(frame_name)?;
         // Local code (inner label)
         if let Some(&addr) = frame.inner_labels.get(&target) {
-            let value = Linker::calc_inst_offset(
+            let value = Linker::offset_from_inst(
                 addr,
                 inst_addr,
             );
-            return Some(ResolvedLabel {
+            return Some(ResolvedIdent {
                 inst_addr,
                 target,
                 value,
@@ -311,7 +272,7 @@ impl Linker {
         }
         // Local frame var
         if let Some(&value) = frame.frame_labels.get(&target) {
-            return Some(ResolvedLabel {
+            return Some(ResolvedIdent {
                 inst_addr,
                 target,
                 value,
@@ -324,13 +285,13 @@ impl Linker {
     pub fn relocate(&mut self) -> Vec<(usize, String)> {
         let mut unrelocated = Vec::<(usize, String)>::new();
         let mut inst_updates = Vec::<(usize, i32)>::new();
-        for (inst_loc, target) in self.reloc_tab.iter() {
+        for (inst_loc, target) in self.to_relocate.iter() {
             let inst_loc = *inst_loc;
             let inst_addr = inst_loc_to_addr(inst_loc);
-            match self.resolve_label(inst_loc, target) {
+            match self.resolve_ident(target, inst_loc) {
                 Some(resolved) => {
                     inst_updates.push((inst_loc, resolved.value));
-                    self.resolved_labels.insert(inst_addr, resolved);
+                    self.resolved_idents.insert(inst_addr, resolved);
                 }
                 None => {
                     unrelocated.push((inst_loc, target.clone()));
@@ -363,7 +324,7 @@ impl Linker {
         Ok(bin)
     }
 
-    fn calc_inst_offset(target_addr: i32, inst_addr: i32) -> i32 {
+    fn offset_from_inst(target_addr: i32, inst_addr: i32) -> i32 {
         target_addr - inst_addr - 1
     }
 }

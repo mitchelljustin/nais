@@ -34,9 +34,9 @@ fn main() {
     let mut machine = Machine::new();
     machine.max_cycles = 1_000_000_000;
 
-    machine.enable_debugger = true;
     machine.debug_info = debug_info;
+    machine.debug_on_error = true;
 
-    machine.copy_code(&binary);
+    machine.load_code(&binary);
     machine.run();
 }

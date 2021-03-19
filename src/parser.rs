@@ -1,8 +1,11 @@
+use std::iter::FromIterator;
+
 use rule::Matcher;
 
 use crate::{ast, tokenizer};
 use crate::parser::ParserError::SyntaxError;
 use crate::parser::rule::{Grammar, ParseTable, ProductionRule, Symbol};
+use crate::parser::rule::Matcher::NonTerm;
 use crate::tokenizer::Token;
 
 #[macro_use]
@@ -11,7 +14,7 @@ mod minirust;
 
 
 #[derive(Debug)]
-enum ParserError {
+pub enum ParserError {
     SyntaxError {
         top: Option<Matcher>,
         stack: Vec<Matcher>,
@@ -24,8 +27,14 @@ pub struct Parser {
 }
 
 #[derive(Debug, Clone)]
+enum Derivation {
+    Rule(ProductionRule),
+    Terminal(Token),
+}
+
+#[derive(Debug, Clone)]
 pub enum ParseTree {
-    Node {
+    NonTerminal {
         rule: ProductionRule,
         children: Vec<ParseTree>,
     },
@@ -34,13 +43,20 @@ pub enum ParseTree {
     },
 }
 
+impl FromIterator<Derivation> for ParseTree {
+    fn from_iter<I: IntoIterator<Item=Derivation>>(iter: I) -> Self {
+        ParseTree::Terminal { token: Token::EOF }
+    }
+}
+
 impl Parser {
-    fn parse(&self, input: &[Token]) -> Result<ParseTree, ParserError> {
+    pub fn parse(&self, input: &[Token]) -> Result<ParseTree, ParserError> {
         use rule::Matcher::*;
 
         let mut input = input.to_vec();
         input.push(Token::EOF);
         let mut stack = vec![NonTerm(Symbol::START)];
+        let mut derivations = vec![];
         while !stack.is_empty() {
             let top = match stack.pop() {
                 Some(top) => top,
@@ -48,38 +64,28 @@ impl Parser {
             };
             match &top {
                 NonTerm(symbol) => {
-                    println!("pop {:?}", symbol);
-                    let rule = match self.table.get(symbol, &input) {
+                    let rule = match self.table.find_rule(symbol, &input) {
                         Some(rule) => rule,
                         None => return Err(SyntaxError { input, stack, top: Some(top.clone()) }),
                     };
-                    let _new_node = ParseTree::Node {
-                        rule: rule.clone(),
-                        children: vec![],
-                    };
-                    // TODO: append rule to try
-                    println!("append {:?}", rule.rhs);
+                    derivations.push(Derivation::Rule(rule.clone()));
                     let mut new_matchers = rule.rhs;
                     new_matchers.reverse();
                     stack.extend_from_slice(&new_matchers);
                 }
-                Term(tm) => {
-                    println!("pop {:?}", tm);
+                Term(matcher) => {
                     if input.is_empty() {
                         return Err(SyntaxError { input, stack, top: Some(top.clone()) });
                     }
                     let token = input.remove(0);
-                    if !tm.matches(&token) {
+                    if !matcher.matches(&token) {
                         return Err(SyntaxError { input, stack, top: Some(top.clone()) });
                     }
-                    println!("consume {:?}", token);
-
+                    derivations.push(Derivation::Terminal(token));
                 }
             }
         }
-        Ok(ParseTree::Terminal {
-            token: Token::EOF,
-        })
+        Ok(ParseTree::from_iter(derivations))
     }
 }
 
@@ -112,7 +118,8 @@ mod tests {
         production_rules! {
             START -> expr EOF;
 
-            expr -> expr '+' Literal;
+            expr -> Literal '+' expr;
+            expr -> Literal;
         }
     }
 

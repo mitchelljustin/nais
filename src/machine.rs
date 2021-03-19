@@ -9,7 +9,7 @@ use MachineStatus::*;
 
 use crate::encoder::Encoder;
 use crate::isa::Inst;
-use crate::linker::{DebugInfo, ResolvedLabel};
+use crate::linker::{DebugInfo, ResolvedIdent};
 use crate::mem::{addrs, segs, inst_loc_to_addr, Memory};
 use crate::util;
 
@@ -49,7 +49,7 @@ pub struct Machine {
 
     pub debug_info: DebugInfo,
     pub max_cycles: usize,
-    pub enable_debugger: bool,
+    pub debug_on_error: bool,
 }
 
 impl Machine {
@@ -223,7 +223,7 @@ impl Machine {
 
     pub fn code_dump(&self, highlight: i32, addr_range: Range<i32>) -> String {
         let mut out = String::new();
-        let mut cur_frame = match self.debug_info.frame_name_for_inst.get(&addr_range.start) {
+        let mut cur_frame = match self.debug_info.frame_for_inst_addr.get(&addr_range.start) {
             Some(name) => {
                 writeln!(out, ".. {}:", name).unwrap();
                 Some(name.clone())
@@ -231,7 +231,7 @@ impl Machine {
             None => None,
         };
         for addr in addr_range {
-            if let Some(frame) = self.debug_info.frame_name_for_inst.get(&addr) {
+            if let Some(frame) = self.debug_info.frame_for_inst_addr.get(&addr) {
                 if frame != cur_frame.as_ref().unwrap() {
                     writeln!(out, "{}:", frame).unwrap();
                     cur_frame = Some(frame.clone());
@@ -245,8 +245,8 @@ impl Machine {
                     continue;
                 }
             };
-            match self.debug_info.resolved_labels.get(&addr) {
-                Some(ResolvedLabel { target, label_type, .. }) => {
+            match self.debug_info.resolved_idents.get(&addr) {
+                Some(ResolvedIdent { target, label_type, .. }) => {
                     write!(out, " {:12} {}", target, label_type).unwrap();
                 }
                 None => out.write_str(&" ".repeat(15)).unwrap(),
@@ -270,7 +270,7 @@ impl Machine {
 
     pub fn stack_mem_dump(&self, mut addr_range: Range<i32>) -> String {
         segs::STACK.clamp_range(&mut addr_range);
-        let frame = self.debug_info.frame_name_for_inst
+        let frame = self.debug_info.frame_for_inst_addr
             .get(&self.getpc());
         let var_for_offset = match frame {
             Some(frame) => self.debug_info.call_frames
@@ -339,12 +339,12 @@ impl Machine {
             debug_info: DebugInfo::new(),
             status: Idle,
             ncycles: 0,
-            enable_debugger: true,
+            debug_on_error: true,
             max_cycles: 1_000_000,
         }
     }
 
-    pub fn copy_code(&mut self, code: &[i32]) {
+    pub fn load_code(&mut self, code: &[i32]) {
         for (loc, bin_inst) in code.iter().enumerate() {
             let addr = inst_loc_to_addr(loc);
             self.mem[addr] = *bin_inst;
@@ -371,7 +371,7 @@ impl Machine {
         while self.is_running() {
             self.cycle();
         }
-        if self.status != Stopped && self.enable_debugger {
+        if self.status != Stopped && self.debug_on_error {
             println!("{:?}", self);
             self.breakpoint();
             self.debug_cycle();

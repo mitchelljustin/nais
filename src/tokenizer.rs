@@ -6,6 +6,7 @@ const KEYWORDS: &[&str] = &[
     "struct",
     "if",
     "while",
+
     // FUTURE
     "const",
     "f32",
@@ -71,15 +72,9 @@ impl Token {
         }
     }
 
-    pub fn push(&mut self, ch: char) {
+    fn push(&mut self, ch: char) {
         if let Some(val) = self.val_mut() {
             val.push(ch);
-        }
-    }
-
-    pub fn clear(&mut self) {
-        if let Some(val) = self.val_mut() {
-            val.clear();
         }
     }
 }

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fmt::Debug;
 
 use crate::tokenizer;
@@ -33,8 +33,9 @@ pub enum Symbol {
     arg,
     param_list,
     params,
-    param,
+    var_def,
     ty,
+    prim_ty,
     ret_ty,
     if_stmt,
     while_stmt,
@@ -43,12 +44,9 @@ pub enum Symbol {
     bin_op,
     cmp_op,
     array_item,
-    array_literal,
-    array_literal_elems,
-    struct_literal,
-    struct_literal_items,
     struct_item,
     deref,
+    deref_target,
 
     undefined,
 }
@@ -63,15 +61,23 @@ pub struct TokenMatcher {
 impl TokenMatcher {
     pub fn matches(&self, tok: &Token) -> bool {
         if self.exact_val {
-            let mut tok = tok.clone();
-            tok.clear();
-            self.token == tok
-        } else {
             &self.token == tok
+        } else {
+            use Token::*;
+            match (tok, &self.token) {
+                (Unknown(_), Unknown(_)) => true,
+                (Space(_), Space(_)) => true,
+                (Ident(_), Ident(_)) => true,
+                (Keyword(_), Keyword(_)) => true,
+                (Literal(_), Literal(_)) => true,
+                (Sym(_), Sym(_)) => true,
+                (EOF, EOF) => true,
+                _ => false,
+            }
         }
     }
 
-    pub fn slices_match(prefix: &[TokenMatcher], tokens: &[Token]) -> bool {
+    pub fn prefix_matches(prefix: &[TokenMatcher], tokens: &[Token]) -> bool {
         prefix
             .iter()
             .zip(tokens)
@@ -146,11 +152,6 @@ pub struct ProductionRule {
     pub rhs: Vec<Matcher>,
 }
 
-pub const _DUMMY_RULE: ProductionRule = ProductionRule {
-    lhs: Symbol::undefined,
-    rhs: vec![],
-};
-
 pub type Grammar = Vec<ProductionRule>;
 
 
@@ -190,47 +191,28 @@ impl From<Matcher> for Option<TokenMatcher> {
     }
 }
 
-const PATTERN_MAX_LEN: usize = 5;
+const PREFIX_MAX_LEN: usize = 5;
 
 #[derive(Debug, Clone)]
-struct Transition {
-    pattern: Vec<TokenMatcher>,
+struct ParseTableEntry {
     rule: ProductionRule,
+    own_prefix: Vec<TokenMatcher>,
+    take_if_begins_with: Vec<Vec<TokenMatcher>>,
 }
 
 #[derive(Debug)]
 pub struct ParseTable {
-    rules: Vec<ProductionRule>,
-    transitions: HashMap<Symbol, Vec<Transition>>,
+    entries: Vec<ParseTableEntry>,
 }
 
 impl ParseTable {
     fn new() -> ParseTable {
         ParseTable {
-            rules: Vec::new(),
-            transitions: HashMap::new(),
+            entries: Vec::new(),
         }
     }
-
-    fn transitions_for(&mut self, symbol: Symbol) -> &mut Vec<Transition> {
-        if self.transitions.get(&symbol).is_none() {
-            self.transitions.insert(symbol, Vec::new());
-        }
-        self.transitions.get_mut(&symbol).unwrap()
-    }
-
-    /*
-        START -> program;
-
-        program -> "let" var '=' literal;
-        program -> EMPTY;
-
-        var -> Ident;
-        literal -> Literal;
-    */
 
     pub fn add_rule(&mut self, rule: &ProductionRule) {
-        self.rules.push(rule.to_owned());
         let terminals = rule.rhs
             .iter()
             .take_while(|m| m.is_terminal())
@@ -240,37 +222,57 @@ impl ParseTable {
             })
             .cloned()
             .collect::<Vec<_>>();
-        let pattern_len = terminals.len();
-        self.transitions_for(rule.lhs).push(Transition {
-            pattern: terminals,
-            rule: rule.clone(),
-        });
-        if pattern_len < PATTERN_MAX_LEN {
-            let _first_nonterm = rule.rhs.get(pattern_len);
-
-        }
+        self.entries.push(ParseTableEntry {
+            rule: rule.to_owned(),
+            own_prefix: terminals.clone(),
+            take_if_begins_with: vec![terminals],
+        })
     }
 
-    pub fn finish(&self) {
-        for (symbol, transitions) in self.transitions.iter() {
-            let mut done = HashSet::<(usize, usize)>::new();
-            for (i1, t1) in transitions.iter().enumerate() {
-                for (i2, t2) in transitions.iter().enumerate() {
-                    if i1 != i2 && t1.pattern == t2.pattern && !done.contains(&(i2, i1)) {
-                        println!("WARNING: Ambiguous transitions from {:?}: {:?} -> {:?} and {:?}",
-                                 symbol, t1.pattern, t1.rule.rhs, t2.rule.rhs);
-                        done.insert((i1, i2));
-                    }
-                }
+    pub fn disambiguate(&mut self) {
+        let mut prefixes_for_sym = HashMap::new();
+        for entry in self.entries.iter() {
+            let symbol = entry.rule.lhs;
+            if prefixes_for_sym.get(&symbol).is_none() {
+                prefixes_for_sym.insert(symbol, Vec::<Vec<TokenMatcher>>::new());
             }
+            prefixes_for_sym
+                .get_mut(&symbol)
+                .unwrap()
+                .push(entry.own_prefix.clone());
+        }
+        for entry in self.entries.iter_mut() {
+            let own_prefix = entry.own_prefix.clone();
+            if own_prefix.len() >= PREFIX_MAX_LEN {
+                continue;
+            }
+            let first_nonterm = match entry.rule.rhs
+                .iter()
+                .find_map(|m| match m {
+                    Matcher::NonTerm(s) => Some(s),
+                    Matcher::Term(_) => None,
+                }) {
+                Some(t) => t,
+                None => continue,
+            };
+            let extra_prefixes = prefixes_for_sym.get(first_nonterm).unwrap();
+            let new_prefixes = extra_prefixes
+                .iter()
+                .map(|prefix| vec![own_prefix.clone(), prefix.clone()].concat())
+                .collect();
+            entry.take_if_begins_with = new_prefixes;
         }
     }
 
-    pub fn get(&self, symbol: &Symbol, input: &[Token]) -> Option<ProductionRule> {
-        let transitions = self.transitions.get(symbol)?;
-        for transition in transitions {
-            if TokenMatcher::slices_match(&transition.pattern, input) {
-                return Some(transition.rule.to_owned());
+    pub fn find_rule(&self, lhs: &Symbol, tokens: &[Token]) -> Option<ProductionRule> {
+        for entry in self.entries.iter() {
+            if entry.rule.lhs != *lhs {
+                continue;
+            }
+            for prefix in entry.take_if_begins_with.iter() {
+                if TokenMatcher::prefix_matches(prefix, tokens) {
+                    return Some(entry.rule.to_owned());
+                }
             }
         }
         None
@@ -280,38 +282,45 @@ impl ParseTable {
 impl From<&Grammar> for ParseTable {
     fn from(grammar: &Grammar) -> Self {
         let mut table = ParseTable::new();
-        for rule in grammar.into_iter() {
+        for rule in grammar.iter() {
             table.add_rule(rule);
         }
-        table.finish();
+        table.disambiguate();
         table
     }
 }
 
 
 mod tests {
+    use crate::tokenizer::{ident, sym, literal};
+
     use super::*;
-    use crate::tokenizer::ident;
 
     #[test]
     fn test_simple_grammar() {
         let simple_grammar = production_rules! {
             START -> expr EOF;
 
+            expr -> Ident '+' Literal;
             expr -> Ident;
+            expr -> Literal;
         };
         let table = ParseTable::from(&simple_grammar);
         assert_eq!(
-            table.get(&Symbol::START, &[Token::EOF]),
+            table.find_rule(&Symbol::START, &[Token::EOF]),
             None,
         );
         assert_eq!(
-            table.get(&Symbol::START, &[ident("x"), Token::EOF]).as_ref(),
+            table.find_rule(&Symbol::START, &[ident("x"), Token::EOF]).as_ref(),
             simple_grammar.get(0),
         );
         assert_eq!(
-            table.get(&Symbol::expr, &[ident("x"), Token::EOF]).as_ref(),
+            table.find_rule(&Symbol::expr, &[ident("x"), Token::EOF]).as_ref(),
             simple_grammar.get(1),
+        );
+        assert_eq!(
+            table.find_rule(&Symbol::expr, &[ident("x"), sym("+"), literal("3"), Token::EOF]).as_ref(),
+            simple_grammar.get(3),
         );
     }
 }

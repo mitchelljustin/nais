@@ -9,6 +9,7 @@ use ParserError::*;
 
 use crate::isa;
 use crate::linker::{DebugInfo, Linker, LinkerError};
+use crate::mem::addrs;
 
 pub enum AssemblyError {
     IOError(io::Error),
@@ -97,8 +98,22 @@ impl Assembler {
     }
 
     pub fn init(&mut self) {
-        self.linker.init();
+        self.add_default_constants();
         self.add_ecall_codes();
+    }
+
+    fn add_default_constants(&mut self) {
+        self.linker.add_global_constant("pc", addrs::PC);
+        self.linker.add_global_constant("sp", addrs::SP);
+        self.linker.add_global_constant("fp", addrs::FP);
+        self.linker.add_global_constant("retval", -3);
+    }
+
+    fn add_ecall_codes(&mut self) {
+        for (callcode, (_, call_name)) in isa::env_call::CALL_LIST.iter().enumerate() {
+            let const_name = format!("ecall.{}", call_name);
+            self.linker.add_global_constant(&const_name, callcode as i32);
+        }
     }
 
     pub fn process(&mut self, text: &str) {
@@ -139,7 +154,7 @@ impl Assembler {
             if verb.starts_with("_") {
                 self.linker.add_inner_label(name);
             } else {
-                self.linker.add_subroutine_label(name);
+                self.linker.add_subroutine(name);
             }
             return Ok(());
         }
@@ -149,7 +164,6 @@ impl Assembler {
         }
         self.process_inst(verb, args)
     }
-
 
     fn process_inst(&mut self, verb: &str, args: &[&str]) -> Result<(), ParserError> {
         match args {
@@ -187,9 +201,9 @@ impl Assembler {
                 let (name, size) = Assembler::expect_name_and_literal(verb, args)?;
                 self.linker.add_local_var(name, size);
             }
-            ".const" => {
+            ".define" => {
                 let (name, value) = Assembler::expect_name_and_literal(verb, args)?;
-                self.linker.add_constant(name, value);
+                self.linker.add_global_constant(name, value);
             }
             ".start_frame" => {
                 self.linker.add_placeholder_inst("loadi", "fp");
@@ -197,23 +211,16 @@ impl Assembler {
                 self.linker.add_placeholder_inst("loadi", "sp");
                 self.linker.add_placeholder_inst("storei", "fp");
 
-                self.linker.locals_alloc();
+                self.linker.add_inst("addsp", self.linker.cur_frame().locals_size);
             }
             ".end_frame" => {
-                self.linker.locals_free();
+                self.linker.add_inst("addsp", -self.linker.cur_frame().locals_size);
 
                 self.linker.add_placeholder_inst("storei", "fp");
             }
             unknown => return Err(UnknownMacro { verb: unknown.to_string() })
         }
         Ok(())
-    }
-
-    fn add_ecall_codes(&mut self) {
-        for (callcode, (_, call_name)) in isa::env_call::LIST.iter().enumerate() {
-            let const_name = format!("ecall.{}", call_name);
-            self.linker.add_constant(&const_name, callcode as i32);
-        }
     }
 
     fn parse_integer(arg: &str) -> Result<i32, ParserError> {
