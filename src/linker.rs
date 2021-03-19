@@ -37,7 +37,7 @@ impl From<Linker> for DebugInfo {
 
 #[derive(Copy, Clone, Debug)]
 pub enum LabelType {
-    GlobalConstant,
+    Substitution,
     Subroutine,
     InnerLabel,
     FrameVar,
@@ -56,7 +56,7 @@ pub struct ResolvedTarget {
 impl Display for LabelType {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            LabelType::GlobalConstant => "const",
+            LabelType::Substitution => "glob",
             LabelType::Subroutine => "sub",
             LabelType::InnerLabel => "inner",
             LabelType::FrameVar => "var",
@@ -110,7 +110,7 @@ pub struct Linker {
     call_frames: HashMap<String, CallFrame>,
     cur_frame_name: String,
     frame_for_inst_addr: HashMap<i32, String>,
-    global_constants: HashMap<String, i32>,
+    global_mappings: HashMap<String, i32>,
 
     encoder: Encoder,
 
@@ -122,7 +122,7 @@ impl Linker {
         Linker {
             instructions: Vec::new(),
             call_frames: HashMap::new(),
-            global_constants: HashMap::new(),
+            global_mappings: HashMap::new(),
             frame_for_inst_addr: HashMap::new(),
             to_relocate: HashMap::new(),
             resolved_targets: HashMap::new(),
@@ -195,7 +195,7 @@ impl Linker {
                 self.call_frames.get_mut(&self.cur_frame_name).unwrap()
             }
             None => {
-                const DEFAULT_ENTRY_LABEL: &str = "_entry";
+                const DEFAULT_ENTRY_LABEL: &str = "entry";
                 self.errors.push(LinkerError::NeedToDefineEntryLabel);
                 self.add_subroutine(DEFAULT_ENTRY_LABEL);
                 self.call_frames.get_mut(DEFAULT_ENTRY_LABEL).unwrap()
@@ -232,8 +232,20 @@ impl Linker {
         frame.params_size += size;
     }
 
+    pub fn add_substitution(&mut self, name: &str, value: i32) {
+        self.global_mappings.insert(name.to_string(), value);
+    }
+
     pub fn add_global_constant(&mut self, name: &str, value: i32) {
-        self.global_constants.insert(name.to_string(), value);
+        let addr = self.next_inst_addr();
+        self.global_mappings.insert(name.to_string(), addr);
+        let inst = Inst {
+            addr:   Some(addr),
+            op:     OP_INVALID,
+            opcode: ((value as u32 & 0xff000000) >> 24) as u8,
+            arg:    (value & 0x00ffffff) as i32,
+        };
+        self.instructions.push(inst);
     }
 
     pub fn finish(&mut self) {
@@ -243,8 +255,8 @@ impl Linker {
     fn resolve_ident(&self, inst_loc: usize, name: &str) -> Option<(i32, LabelType)> {
         use LabelType::*;
         let inst_addr = inst_loc_to_addr(inst_loc);
-        if let Some(&value) = self.global_constants.get(name) {
-            return Some((value, GlobalConstant));
+        if let Some(&value) = self.global_mappings.get(name) {
+            return Some((value, Substitution));
         }
         if let Some(frame) = self.call_frames.get(name) {
             let value = Linker::offset_from_inst(

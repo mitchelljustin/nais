@@ -103,13 +103,13 @@ impl Assembler {
     }
 
     fn add_default_constants(&mut self) {
-        self.linker.add_global_constant("pc", addrs::PC);
-        self.linker.add_global_constant("sp", addrs::SP);
-        self.linker.add_global_constant("fp", addrs::FP);
-        self.linker.add_global_constant("retval", -3);
+        self.linker.add_substitution("pc", addrs::PC);
+        self.linker.add_substitution("sp", addrs::SP);
+        self.linker.add_substitution("fp", addrs::FP);
+        self.linker.add_substitution("retval", -3);
         for (callcode, (_, call_name)) in isa::env_call::CALL_LIST.iter().enumerate() {
             let const_name = format!(".ecall.{}", call_name);
-            self.linker.add_global_constant(&const_name, callcode as i32);
+            self.linker.add_substitution(&const_name, callcode as i32);
         }
     }
 
@@ -162,6 +162,10 @@ impl Assembler {
     fn process_statement(&mut self, verb: &str, args: &[&str]) -> Result<(), ParserError> {
         match verb {
             ".define" => {
+                let (name, value) = Assembler::expect_name_and_literal(verb, args)?;
+                self.linker.add_substitution(name, value);
+            }
+            ".word" => {
                 let (name, value) = Assembler::expect_name_and_literal(verb, args)?;
                 self.linker.add_global_constant(name, value);
             }

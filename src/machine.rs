@@ -148,8 +148,8 @@ impl Machine {
     }
 
     fn debug_cycle(&mut self) {
+        println!("FRAME:\n{}\n", self.frame_dump());
         println!("CODE:\n{}", self.code_dump_around_pc(-4..5));
-        println!("FRAME:\n{}", self.frame_dump());
         loop {
             print!("debug% ");
             io::stdout().flush().unwrap();
@@ -240,6 +240,10 @@ impl Machine {
             out.write_str("    ").unwrap();
             match self.load_inst(addr) {
                 Ok(inst) => out.write_str(&inst.to_string()).unwrap(),
+                Err(MachineError::CannotDecodeInst(bin_inst)) => {
+                    writeln!(out, "{:x} [0x{:08x}]", addr, bin_inst).unwrap();
+                    continue;
+                }
                 Err(err) => {
                     writeln!(out, "ERR FETCHING INST {:?}", err).unwrap();
                     continue;
@@ -334,7 +338,7 @@ impl Machine {
             return None;
         }
         let val = self.mem[addr];
-        Some(format!("{:04x}. {:8x} [{:8}]", addr, val, val))
+        Some(format!("{:04x}. {:8x} [{:12}]", addr, val, val))
     }
 
     pub fn new() -> Machine {

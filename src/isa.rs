@@ -23,14 +23,13 @@ pub fn pop(m: &mut Machine) -> Option<i32> {
 }
 
 pub fn loadi(m: &mut Machine, addr: i32) {
-    if let Some(val) = m.stack_load(addr) {
-        push(m, val);
-    }
+    let val = m.unsafe_load(addr);
+    push(m, val);
 }
 
 pub fn storei(m: &mut Machine, addr: i32) {
     if let Some(val) = pop(m) {
-        m.stack_store(addr, val);
+        m.unsafe_store(addr, val);
     }
 }
 
