@@ -16,6 +16,8 @@ entry:
 .word NONCE_1     0x89abcdef
 
 main:
+    .local exitcode 1
+
     .local key 8
     .local key.addr 1
     .local state 16
@@ -141,12 +143,23 @@ main:
         loadf i
         blt _add_loop
 
+    push .sizeof.state
+    loadf state.addr
+    push STDOUT
+    ecall .ecall.write
+    storef exitcode
 
+    loadf exitcode
+    push 0
+    bne _err
 
     .end_frame
-    push EXIT_OK
+    push 0
     ecall .ecall.exit
 
+    _err:
+    loadf exitcode
+    ecall .ecall.exit
 
 double_round:
     .param state.addr 1
