@@ -149,7 +149,7 @@ impl Machine {
 
     fn debug_cycle(&mut self) {
         println!("CODE:\n{}", self.code_dump_around_pc(-4..5));
-        println!("STACK:\n{}", self.stack_dump_from(8));
+        println!("FRAME:\n{}", self.frame_dump());
         loop {
             print!("debug% ");
             io::stdout().flush().unwrap();
@@ -259,6 +259,11 @@ impl Machine {
         out
     }
 
+    pub fn frame_dump(&self) -> String {
+        let fp = self.mem[addrs::FP];
+        self.stack_mem_dump(fp..self.getsp())
+    }
+
     pub fn stack_dump_from(&self, offset: i32) -> String {
         let sp = self.getsp();
         self.stack_mem_dump((sp - offset)..sp)
@@ -276,7 +281,7 @@ impl Machine {
             Some(frame) => self.debug_info.call_frames
                 .get(frame)
                 .unwrap()
-                .frame_labels.iter()
+                .frame_vars.iter()
                 .map(|(name, off)| (off, name) )
                 .collect(),
             None => HashMap::new(),
@@ -302,10 +307,10 @@ impl Machine {
                         -1 => " saved fp".to_string(),
                         offset => {
                             match var_for_offset.get(&offset) {
+                                None => " ".repeat(13),
+                                Some(n) if n.starts_with(".") => " ".repeat(13),
                                 Some(var_name) =>
                                     format!(" {:12}", var_name),
-                                None =>
-                                    " ".repeat(13),
                             }
                         }
                     },

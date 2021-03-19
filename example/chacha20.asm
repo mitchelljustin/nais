@@ -1,4 +1,4 @@
-.define a1 0x2312
+.define stdout 0x1
 
 main:
     .local str 32
@@ -6,5 +6,5 @@ main:
     .start_frame
 
     .end_frame
-    push 73
+    push 0 ; OK
     ecall ecall.exit

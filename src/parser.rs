@@ -27,7 +27,7 @@ pub struct Parser {
 }
 
 #[derive(Debug, Clone)]
-enum Derivation {
+enum Decision {
     Rule(ProductionRule),
     Terminal(Token),
 }
@@ -43,8 +43,8 @@ pub enum ParseTree {
     },
 }
 
-impl FromIterator<Derivation> for ParseTree {
-    fn from_iter<I: IntoIterator<Item=Derivation>>(iter: I) -> Self {
+impl FromIterator<Decision> for ParseTree {
+    fn from_iter<I: IntoIterator<Item=Decision>>(iter: I) -> Self {
         ParseTree::Terminal { token: Token::EOF }
     }
 }
@@ -56,7 +56,7 @@ impl Parser {
         let mut input = input.to_vec();
         input.push(Token::EOF);
         let mut stack = vec![NonTerm(Symbol::START)];
-        let mut derivations = vec![];
+        let mut derivation = vec![];
         while !stack.is_empty() {
             let top = match stack.pop() {
                 Some(top) => top,
@@ -68,7 +68,7 @@ impl Parser {
                         Some(rule) => rule,
                         None => return Err(SyntaxError { input, stack, top: Some(top.clone()) }),
                     };
-                    derivations.push(Derivation::Rule(rule.clone()));
+                    derivation.push(Decision::Rule(rule.clone()));
                     let mut new_matchers = rule.rhs;
                     new_matchers.reverse();
                     stack.extend_from_slice(&new_matchers);
@@ -81,11 +81,11 @@ impl Parser {
                     if !matcher.matches(&token) {
                         return Err(SyntaxError { input, stack, top: Some(top.clone()) });
                     }
-                    derivations.push(Derivation::Terminal(token));
+                    derivation.push(Decision::Terminal(token));
                 }
             }
         }
-        Ok(ParseTree::from_iter(derivations))
+        Ok(ParseTree::from_iter(derivation))
     }
 }
 

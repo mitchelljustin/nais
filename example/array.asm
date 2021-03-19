@@ -1,22 +1,25 @@
-.define start_val 0xffab
-.define increment 0x002f
-
+.define start_val 0x0000
+.define increment 0x0003
 
 .define stdout 1
 
 entry:
-    .local_array ints 100
-    .local_addrs ints
+    .local ints 100
+    .local ints.addr 1
 
     .start_frame
 
-    push ints.len
+    loadi fp
+    addi ints
+    storef ints.addr
+
+    push .sizeof.ints
     loadf ints.addr
     push
     jal fill_array
     addsp -3
 
-    push ints.len
+    push .sizeof.ints
     loadf ints.addr
     push
     jal print_ints
@@ -25,29 +28,31 @@ entry:
     .end_frame
 
     push 0
-    ecall ecall.exit
+    ecall .ecall.exit
 
 fill_array:
-    .args array array.len
-    .locals index val
+    .param array 1
+    .param array.len 1
+    .local index 1
+    .local x 1
     .start_frame
 
     push 0
     storef index
 
     push start_val
-    storef val
+    storef x
 
     _loop:
-        loadf val
+        loadf x
         loadf array
         loadf index
         add
         store
 
-        loadf val
+        loadf x
         addi increment
-        storef val
+        storef x
 
         loadf index
         addi 1
@@ -61,24 +66,31 @@ fill_array:
     ret
 
 print_ints:
-    .args ints.addr ints.len
-    .locals index int nchars
-    .local_array out 9 ; 8 hex chars + 1 newline
-    .local_addrs out
+    .param ints.addr 1
+    .param ints.len 1
+    .local index 1
+    .local x 1
+    .local nchars 1
+    .local out 9 ; 8 hex chars + 1 newline
+    .local out.addr 1
     .start_frame
 
     push 0
     storef index
 
+    loadi fp
+    addi out
+    storef out.addr
+
     _loop:
-        loadf ints.addr ; &ints
+        loadf ints.addr
         loadf index
         add ; &ints + index
-        load ; *(&ints + index)
-        storef int
+        load ; ints[index]
+        storef x
 
         loadf out.addr
-        loadf int
+        loadf x
         push
         jal int_to_hex
         storef nchars
@@ -86,17 +98,19 @@ print_ints:
 
         push 0x0a ; newline
         loadi fp
-        push out
-        add
+        addi out
         loadf nchars
         add
         store
 
         loadf nchars
         addi 1 ; for the newline
+        storef nchars
+
+        loadf nchars
         loadf out.addr
         push stdout
-        ecall ecall.write
+        ecall .ecall.write
         addsp -1 ; ignore write result for now
 
         loadf index
@@ -111,23 +125,24 @@ print_ints:
     ret
 
 int_to_hex:
-    .args int out.addr ; buf must be at least len 8
-    .return nchars
-    .locals char
+    .param x 1
+    .param out.addr 1 ; buf must be at least len 8
+    .local ch 1
+    .local nchars 1
     .start_frame
 
     push 0
     storef nchars
 
     _loop:
-        loadf int
+        loadf x
         andi 0xf
         push
         jal int4_to_hex_char
-        storef char
+        storef ch
         addsp -1
 
-        loadf char
+        loadf ch
         loadf out.addr
         loadf nchars
         add
@@ -137,12 +152,12 @@ int_to_hex:
         addi 1
         storef nchars
 
-        loadf int
+        loadf x
         shr 4
-        storef int
+        storef x
 
         push 0
-        loadf int
+        loadf x
         bne _loop
 
     loadf nchars
@@ -151,51 +166,56 @@ int_to_hex:
     jal reverse_array
     addsp -3
 
+    loadf nchars
+    storef retval
+
     .end_frame
     ret
 
 int4_to_hex_char:
-    .args int
-    .return char
+    .param x 1
     .start_frame
 
-    loadf int
+    loadf x
     push 0
-    blt _err ; if int < 0 err
+    blt _err ; if x < 0 err
 
-    loadf int
+    loadf x
     push 10
     blt _0_to_9
 
-    loadf int
+    loadf x
     push 16
     blt _a_to_f
 
     jump _err
 
     _0_to_9:
-        loadf int
+        loadf x
         addi '0'
-        storef char
+        storef retval
         jump _end
 
     _a_to_f:
-        loadf int
+        loadf x
         subi 10
         addi 'a'
-        storef char
+        storef retval
         jump _end
 
     _err:
         push '?'
-        storef char
+        storef retval
     _end:
         .end_frame
         ret
 
 reverse_array:
-    .args arr.addr arr.len
-    .locals temp i max
+    .param arr.addr 1
+    .param arr.len 1
+    .local temp 1
+    .local i 1
+    .local max 1
     .start_frame
 
     loadf arr.len

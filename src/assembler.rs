@@ -111,7 +111,7 @@ impl Assembler {
 
     fn add_ecall_codes(&mut self) {
         for (callcode, (_, call_name)) in isa::env_call::CALL_LIST.iter().enumerate() {
-            let const_name = format!("ecall.{}", call_name);
+            let const_name = format!(".ecall.{}", call_name);
             self.linker.add_global_constant(&const_name, callcode as i32);
         }
     }
@@ -170,7 +170,7 @@ impl Assembler {
             [] => {
                 self.linker.add_inst(verb, 0);
                 Ok(())
-            }
+            },
             [arg] => {
                 match Assembler::parse_integer(arg) {
                     Ok(arg) => {
@@ -193,13 +193,15 @@ impl Assembler {
 
     fn process_macro(&mut self, verb: &str, args: &[&str]) -> Result<(), ParserError> {
         match verb {
-            ".arg" => {
+            ".param" => {
                 let (name, size) = Assembler::expect_name_and_literal(verb, args)?;
                 self.linker.add_arg_var(name, size);
+                self.linker.add_local_constant(&Assembler::var_size_name(name), size);
             }
             ".local" => {
                 let (name, size) = Assembler::expect_name_and_literal(verb, args)?;
                 self.linker.add_local_var(name, size);
+                self.linker.add_local_constant(&Assembler::var_size_name(name), size);
             }
             ".define" => {
                 let (name, value) = Assembler::expect_name_and_literal(verb, args)?;
@@ -261,5 +263,9 @@ impl Assembler {
             return Ok((name, literal));
         }
         Err(UnknownError)
+    }
+
+    fn var_size_name(var_name: &str) -> String {
+        format!(".sizeof.{}", var_name)
     }
 }

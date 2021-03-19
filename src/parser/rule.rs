@@ -217,8 +217,8 @@ impl ParseTable {
             .iter()
             .take_while(|m| m.is_terminal())
             .map(|m| match m {
+                _ => panic!(),
                 Matcher::Term(tm) => tm,
-                Matcher::NonTerm(_) => panic!(),
             })
             .cloned()
             .collect::<Vec<_>>();

@@ -67,7 +67,7 @@ impl Display for LabelType {
 pub struct CallFrame {
     pub name: String,
     pub addr_range: Range<i32>,
-    pub frame_labels: HashMap<String, i32>,
+    pub frame_vars: HashMap<String, i32>,
     pub inner_labels: HashMap<String, i32>,
     pub locals_size: i32,
     pub args_size: i32,
@@ -167,7 +167,7 @@ impl Linker {
         self.call_frames.insert(name.to_string(), CallFrame {
             name: name.to_string(),
             addr_range: next_addr..-1,
-            frame_labels: HashMap::new(),
+            frame_vars: HashMap::new(),
             inner_labels: HashMap::new(),
             locals_size: 0,
             args_size: 0,
@@ -198,9 +198,16 @@ impl Linker {
         self.call_frames.get(&self.cur_frame_name).unwrap()
     }
 
+    pub fn add_local_constant(&mut self, name: &str, value: i32) {
+        self.cur_frame_mut().frame_vars.insert(
+            name.to_string(),
+            value,
+        );
+    }
+
     pub fn add_local_var(&mut self, name: &str, size: i32) {
         let frame = self.cur_frame_mut();
-        frame.frame_labels.insert(
+        frame.frame_vars.insert(
             name.to_string(),
             frame.locals_size,
         );
@@ -209,7 +216,7 @@ impl Linker {
 
     pub fn add_arg_var(&mut self, name: &str, size: i32) {
         let frame = self.cur_frame_mut();
-        frame.frame_labels.insert(
+        frame.frame_vars.insert(
             name.to_string(),
             -frame.args_size - 4, // [..args retval retaddr savedfp || locals ]
         );
@@ -271,7 +278,7 @@ impl Linker {
             });
         }
         // Local frame var
-        if let Some(&value) = frame.frame_labels.get(&target) {
+        if let Some(&value) = frame.frame_vars.get(&target) {
             return Some(ResolvedIdent {
                 inst_addr,
                 target,
