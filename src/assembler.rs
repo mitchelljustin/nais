@@ -43,7 +43,6 @@ impl fmt::Display for AssemblyError {
 
 #[derive(Debug)]
 pub enum ParserError {
-    UnknownMacro { verb: String },
     WrongNumberOfArguments { verb: String, expected: RangeInclusive<usize>, actual: usize },
     InvalidIntegerArg(ParseIntError),
     OnlyAsciiCharsSupported { st: String },

@@ -6,7 +6,7 @@ use std::ops::Range;
 use crate::encoder::Encoder;
 use crate::isa::{Inst, OP_INVALID};
 use crate::linker::LinkerError::MissingTarget;
-use crate::mem::{addrs, inst_loc_to_addr};
+use crate::mem::inst_loc_to_addr;
 
 #[derive(Clone)]
 pub struct DebugInfo {

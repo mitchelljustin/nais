@@ -26,7 +26,6 @@ pub enum MachineError {
     CodeAccessSegFault { addr: i32 },
     ProgramExit(i32),
     NoSuchEnvCall(i32),
-    EnvCallErr(String),
     LoadAddressOutOfBounds { addr: i32 },
     StoreAddressOutOfBounds { addr: i32 },
     MaxCyclesReached,
@@ -187,9 +186,9 @@ impl Machine {
                 "ps" => {
                     match int_args[..] {
                         [mid, len] =>
-                            println!("{}", self.stack_mem_dump((mid - len)..(mid + len + 1))),
+                            println!("{}", self.stack_dump((mid - len)..(mid + len + 1))),
                         [mid] =>
-                            println!("{}", self.stack_mem_dump((mid - 4)..(mid + 4))),
+                            println!("{}", self.stack_dump((mid - 4)..(mid + 4))),
                         [] =>
                             println!("{}", self.stack_dump_all()),
                         _ =>
@@ -265,19 +264,14 @@ impl Machine {
 
     pub fn frame_dump(&self) -> String {
         let fp = self.mem[addrs::FP];
-        self.stack_mem_dump(fp - 8..self.getsp())
-    }
-
-    pub fn stack_dump_from(&self, offset: i32) -> String {
-        let sp = self.getsp();
-        self.stack_mem_dump((sp - offset)..sp)
+        self.stack_dump(fp - 8..self.getsp())
     }
 
     pub fn stack_dump_all(&self) -> String {
-        self.stack_mem_dump(0..self.getsp())
+        self.stack_dump(0..self.getsp())
     }
 
-    pub fn stack_mem_dump(&self, mut addr_range: Range<i32>) -> String {
+    pub fn stack_dump(&self, mut addr_range: Range<i32>) -> String {
         segs::STACK.clamp_range(&mut addr_range);
         let frame = self.debug_info.frame_for_inst_addr
             .get(&self.getpc());

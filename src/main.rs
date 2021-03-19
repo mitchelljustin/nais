@@ -1,5 +1,3 @@
-#![allow(unused)]
-
 use std::{env, process};
 
 use machine::*;
@@ -13,9 +11,6 @@ mod util;
 mod mem;
 mod assembler;
 mod encoder;
-mod tokenizer;
-mod parser;
-mod ast;
 
 fn main() {
     let args: Vec<String> = env::args().collect();

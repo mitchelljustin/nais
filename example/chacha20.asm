@@ -17,7 +17,6 @@ entry:
 
 main:
     .local exitcode 1
-
     .local key 8
     .local key.addr 1
     .local state 16
@@ -146,6 +145,7 @@ main:
     push .sizeof.state
     loadf state.addr
     push STDOUT
+    ebreak
     ecall .ecall.write
     storef exitcode
 

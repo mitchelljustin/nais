@@ -74,7 +74,6 @@ pub mod env_call {
     use std::io;
     use std::io::{Read, Write};
 
-    use crate::machine::MachineError::EnvCallErr;
     use crate::mem::segs;
 
     use super::*;
