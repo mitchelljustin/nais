@@ -99,7 +99,6 @@ impl Assembler {
 
     pub fn init(&mut self) {
         self.add_default_constants();
-        self.add_ecall_codes();
     }
 
     fn add_default_constants(&mut self) {
@@ -107,9 +106,6 @@ impl Assembler {
         self.linker.add_global_constant("sp", addrs::SP);
         self.linker.add_global_constant("fp", addrs::FP);
         self.linker.add_global_constant("retval", -3);
-    }
-
-    fn add_ecall_codes(&mut self) {
         for (callcode, (_, call_name)) in isa::env_call::CALL_LIST.iter().enumerate() {
             let const_name = format!(".ecall.{}", call_name);
             self.linker.add_global_constant(&const_name, callcode as i32);
@@ -195,7 +191,7 @@ impl Assembler {
         match verb {
             ".param" => {
                 let (name, size) = Assembler::expect_name_and_literal(verb, args)?;
-                self.linker.add_arg_var(name, size);
+                self.linker.add_param(name, size);
                 self.linker.add_local_constant(&Assembler::var_size_name(name), size);
             }
             ".local" => {

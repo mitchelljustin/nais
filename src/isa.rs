@@ -1,11 +1,11 @@
 use std::fmt::{Debug, Display, Formatter};
+use std::fmt;
 
 use crate::machine::{MachineError, MachineStatus};
 use crate::machine::MachineStatus::Stopped;
 use crate::mem::addrs;
 
 use super::Machine;
-use std::fmt;
 
 // --- START OP FUNCTIONS ---
 
@@ -34,9 +34,9 @@ pub fn storei(m: &mut Machine, addr: i32) {
     }
 }
 
-pub fn addsp(m: &mut Machine, offset: i32) {
+pub fn addsp(m: &mut Machine, delta: i32) {
     let sp = m.getsp();
-    m.setsp(sp + offset);
+    m.setsp(sp + delta);
 }
 
 pub fn load(m: &mut Machine, offset: i32) {
@@ -73,7 +73,7 @@ pub fn storef(m: &mut Machine, offset: i32) {
 
 pub mod env_call {
     use std::io;
-    use std::io::Write;
+    use std::io::{Read, Write};
 
     use crate::machine::MachineError::EnvCallErr;
     use crate::mem::segs;
@@ -81,6 +81,7 @@ pub mod env_call {
     use super::*;
 
     pub enum RetCode {
+        UnknownError = -1,
         OK = 0,
         AddressOutOfBounds = 1,
         NotImplemented = 2,
@@ -101,30 +102,52 @@ pub mod env_call {
 
     fn write(m: &mut Machine) -> i32 {
         if let (Some(fd), Some(buf), Some(buf_len)) = (pop(m), pop(m), pop(m)) {
-            let addr_range = buf..(buf + buf_len);
-            if buf < segs::ADDR_SPACE.start || buf + buf_len > segs::ADDR_SPACE.end {
-                return RetCode::AddressOutOfBounds as i32;
+            if let Err(code) = bounds_check(buf, buf_len) {
+                return code as i32;
             }
-            let data: Vec<u8> = addr_range
+            let data: Vec<u8> = (buf..(buf + buf_len))
                 .map(|addr| m.unsafe_load(addr) as u8)
                 .collect();
             let result = match fd {
                 1 => io::stdout().write(&data),
                 2 => io::stderr().write(&data),
-                _ => {
-                    m.set_error(EnvCallErr(format!("cannot write to fd: {}", fd)));
-                    return RetCode::NotImplemented as i32;
-                },
+                _ => return RetCode::NotImplemented as i32,
             };
             match result {
-                Err(err) => {
-                    m.set_error(EnvCallErr(format!("IO error: {}", err)));
-                    RetCode::IOError as i32
-                }
+                Err(_) => RetCode::IOError as i32,
                 Ok(_) => RetCode::OK as i32,
             }
         } else {
-            1
+            RetCode::UnknownError as i32
+        }
+    }
+
+    fn bounds_check(buf: i32, buf_len: i32) -> Result<(), RetCode> {
+        if buf < segs::ADDR_SPACE.start || buf + buf_len > segs::ADDR_SPACE.end {
+            return Err(RetCode::AddressOutOfBounds);
+        }
+        Ok(())
+    }
+
+    fn read(m: &mut Machine) -> i32 {
+        if let (Some(fd), Some(buf), Some(buf_len)) = (pop(m), pop(m), pop(m)) {
+            if let Err(code) = bounds_check(buf, buf_len) {
+                return code as i32;
+            }
+            let mut data = vec![0; buf_len as usize];
+            let result = match fd {
+                1 => io::stdin().read(data.as_mut_slice()),
+                _ => return RetCode::NotImplemented as i32,
+            };
+            if let Err(_) = result {
+                return RetCode::IOError as i32;
+            }
+            for (addr, val) in (buf..(buf + buf_len)).zip(data) {
+                m.stack_store(addr, val as i32);
+            }
+            RetCode::OK as i32
+        } else {
+            RetCode::UnknownError as i32
         }
     }
 
@@ -141,6 +164,7 @@ pub mod env_call {
     def_env_call_list![
         exit
         write
+        read
     ];
 }
 
@@ -305,10 +329,10 @@ impl Display for Inst {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let addr = match self.addr {
             None => String::new(),
-            Some(addr) => format!("{:x}", addr)
+            Some(addr) => format!("{:x} ", addr)
         };
         let arg_trunc = self.arg & 0xffffff;
-        write!(f, "{} {:6} {:6x} [{:4}]",
+        write!(f, "{}{:6} {:6x} [{:4}]",
                addr, self.op.name, arg_trunc, self.arg)
     }
 }

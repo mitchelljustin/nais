@@ -281,7 +281,7 @@ impl Machine {
             Some(frame) => self.debug_info.call_frames
                 .get(frame)
                 .unwrap()
-                .frame_vars.iter()
+                .local_mappings.iter()
                 .map(|(name, off)| (off, name) )
                 .collect(),
             None => HashMap::new(),

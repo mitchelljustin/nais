@@ -67,10 +67,10 @@ impl Display for LabelType {
 pub struct CallFrame {
     pub name: String,
     pub addr_range: Range<i32>,
-    pub frame_vars: HashMap<String, i32>,
+    pub local_mappings: HashMap<String, i32>,
     pub inner_labels: HashMap<String, i32>,
     pub locals_size: i32,
-    pub args_size: i32,
+    pub params_size: i32,
 }
 
 #[derive(Clone, Debug)]
@@ -154,8 +154,8 @@ impl Linker {
         inst_loc_to_addr(self.next_inst_loc())
     }
 
-    pub fn add_placeholder_inst(&mut self, opname: &str, label: &str) {
-        self.to_relocate.insert(self.next_inst_loc(), label.to_string());
+    pub fn add_placeholder_inst(&mut self, opname: &str, ident: &str) {
+        self.to_relocate.insert(self.next_inst_loc(), ident.to_string());
         self.add_inst(opname, 0);
     }
 
@@ -167,10 +167,10 @@ impl Linker {
         self.call_frames.insert(name.to_string(), CallFrame {
             name: name.to_string(),
             addr_range: next_addr..-1,
-            frame_vars: HashMap::new(),
+            local_mappings: HashMap::new(),
             inner_labels: HashMap::new(),
             locals_size: 0,
-            args_size: 0,
+            params_size: 0,
         });
         self.cur_frame_name = name.to_string();
     }
@@ -199,7 +199,7 @@ impl Linker {
     }
 
     pub fn add_local_constant(&mut self, name: &str, value: i32) {
-        self.cur_frame_mut().frame_vars.insert(
+        self.cur_frame_mut().local_mappings.insert(
             name.to_string(),
             value,
         );
@@ -207,20 +207,20 @@ impl Linker {
 
     pub fn add_local_var(&mut self, name: &str, size: i32) {
         let frame = self.cur_frame_mut();
-        frame.frame_vars.insert(
+        frame.local_mappings.insert(
             name.to_string(),
             frame.locals_size,
         );
         frame.locals_size += size;
     }
 
-    pub fn add_arg_var(&mut self, name: &str, size: i32) {
+    pub fn add_param(&mut self, name: &str, size: i32) {
         let frame = self.cur_frame_mut();
-        frame.frame_vars.insert(
+        frame.local_mappings.insert(
             name.to_string(),
-            -frame.args_size - 4, // [..args retval retaddr savedfp || locals ]
+            -frame.params_size - 4, // [..args retval retaddr savedfp || locals ]
         );
-        frame.args_size += size;
+        frame.params_size += size;
     }
 
     pub fn add_global_constant(&mut self, name: &str, value: i32) {
@@ -277,8 +277,8 @@ impl Linker {
                 label_type: LabelType::InnerLabel,
             });
         }
-        // Local frame var
-        if let Some(&value) = frame.frame_vars.get(&target) {
+        // Local var
+        if let Some(&value) = frame.local_mappings.get(&target) {
             return Some(ResolvedIdent {
                 inst_addr,
                 target,

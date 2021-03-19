@@ -1,12 +1,11 @@
-.define start_val 0x0000
-.define increment 0x0003
+.define START_VAL 0x0007
+.define INCREMENT 0x0003
 
-.define stdout 1
+.define STDOUT 1
 
 entry:
     .local ints 100
     .local ints.addr 1
-
     .start_frame
 
     loadi fp
@@ -40,7 +39,7 @@ fill_array:
     push 0
     storef index
 
-    push start_val
+    push START_VAL
     storef x
 
     _loop:
@@ -51,7 +50,7 @@ fill_array:
         store
 
         loadf x
-        addi increment
+        addi INCREMENT
         storef x
 
         loadf index
@@ -71,7 +70,7 @@ print_ints:
     .local index 1
     .local x 1
     .local nchars 1
-    .local out 9 ; 8 hex chars + 1 newline
+    .local out 9 ; <=8 hex chars + 1 newline
     .local out.addr 1
     .start_frame
 
@@ -97,8 +96,7 @@ print_ints:
         addsp -2
 
         push 0x0a ; newline
-        loadi fp
-        addi out
+        loadf out.addr
         loadf nchars
         add
         store
@@ -109,7 +107,7 @@ print_ints:
 
         loadf nchars
         loadf out.addr
-        push stdout
+        push STDOUT
         ecall .ecall.write
         addsp -1 ; ignore write result for now
 
