@@ -1,13 +1,11 @@
-.define STDIN 1
-.define STDOUT 1
-.define STDERR 2
-
-.define OK 0
-
 .define ROUNDS 20
 
 main:
-    .local errcode 1
+    push
+    jal chacha20
+    ecall .cc.exit
+
+chacha20:
     .local key 8
     .local key.addr 1
     .local nonce 2
@@ -44,42 +42,42 @@ main:
     push .L.PROMPT.KEY.len
     loadi pc
     addi 2, PROMPT.KEY
-    push STDERR
-    ecall .ecall.write
-    storef errcode
-    loadf errcode
-    push OK
-    bne _err
+    push .fd.stderr
+    ecall .cc.write
+    storef retval
+    loadf retval
+    push 0
+    blt _end
 
     push .sizeof.key
     loadf key.addr
     push
     jal read_stdin_packed
-    storef errcode
+    storef retval
     addsp -2
-    loadf errcode
-    push OK
-    bne _err
+    loadf retval
+    push 0
+    blt _end
 
     push .L.PROMPT.NONCE.len
     loadi pc
     addi 2, PROMPT.NONCE
-    push STDERR
-    ecall .ecall.write
-    storef errcode
-    loadf errcode
-    push OK
-    bne _err
+    push .fd.stderr
+    ecall .cc.write
+    storef retval
+    loadf retval
+    push 0
+    blt _end
 
     push .sizeof.nonce
     loadf nonce.addr
     push
     jal read_stdin_packed
-    storef errcode
+    storef retval
     addsp -2
-    loadf errcode
-    push OK
-    bne _err
+    loadf retval
+    push 0
+    blt _end
 
     ; initialize state
     loadr STATE.CONST, 0
@@ -175,21 +173,20 @@ main:
 
     push .sizeof.state
     loadf state.addr
-    push STDOUT
-    ecall .ecall.write
-    storef errcode
+    push .fd.stdout
+    ecall .cc.write
+    storef retval
+    loadf retval
+    push 0
+    blt _end
 
-    push OK
-    loadf errcode
-    bne _err
-
+    _ok:
+    push 0
+    storef retval
+    _end:
     .end_frame
-    push OK
-    ecall .ecall.exit
+    ret
 
-    _err:
-    loadf errcode
-    ecall .ecall.exit
 
 read_stdin_packed:
     .param out.addr 1
@@ -205,8 +202,8 @@ read_stdin_packed:
     muli 4
     storef buf.len
 
-    loadf out.len
     loadf buf.len
+    push .sizeof.buf
     bgt _too_long
 
     loadi fp
@@ -215,13 +212,12 @@ read_stdin_packed:
 
     loadf buf.len
     loadf buf.addr
-    push STDIN
-    ecall .ecall.read
+    push .fd.stdin
+    ecall .cc.read
     storef retval
-
     loadf retval
-    push OK
-    bne _end
+    push 0
+    blt _end
 
     ; for (i = 0; i < sizeof(buf); i += 4)
     push 0
@@ -289,7 +285,7 @@ read_stdin_packed:
         blt _loop
     jump _end
     _too_long:
-        push -3
+        push -5
         storef retval
     _end:
         .end_frame

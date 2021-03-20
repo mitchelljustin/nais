@@ -8,6 +8,7 @@ use MachineError::*;
 use MachineStatus::*;
 
 use crate::encoder::Encoder;
+use crate::environment::Environment;
 use crate::isa::Inst;
 use crate::linker::{DebugInfo, ResolvedTarget};
 use crate::mem::{addrs, inst_loc_to_addr, Memory, segs};
@@ -42,9 +43,12 @@ pub enum MachineStatus {
 
 pub struct Machine {
     mem: Memory,
+
     status: MachineStatus,
     ncycles: usize,
     encoder: Encoder,
+
+    pub(crate) env: Environment,
 
     pub debug_info: DebugInfo,
     pub max_cycles: usize,
@@ -338,6 +342,7 @@ impl Machine {
     pub fn new() -> Machine {
         Machine {
             mem: Memory::new(),
+            env: Default::default(),
             encoder: Encoder::new(),
             debug_info: DebugInfo::new(),
             status: Idle,

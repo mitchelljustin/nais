@@ -1,8 +1,8 @@
 use std::fmt::{Debug, Display, Formatter};
 use std::fmt;
 
+use crate::environment;
 use crate::machine::{MachineError, MachineStatus};
-use crate::machine::MachineStatus::Stopped;
 use crate::mem::addrs;
 
 use super::Machine;
@@ -79,110 +79,12 @@ pub fn storer(m: &mut Machine, offset: i32) {
     storei(m, pc + offset);
 }
 
-pub mod env_call {
-    use std::io;
-    use std::io::{Read, Write};
-
-    use crate::mem::segs;
-
-    use super::*;
-
-    pub enum RetCode {
-        UnknownError = -1,
-        OK = 0,
-        AddressOutOfBounds = 1,
-        NotImplemented = 2,
-        IOError = 3,
-    }
-
-    fn exit(m: &mut Machine) -> i32 {
-        match pop(m) {
-            Some(0) =>
-                m.set_status(Stopped),
-            Some(status) =>
-                m.set_status(MachineStatus::Error(MachineError::ProgramExit(status))),
-            None => {}
-        };
-        RetCode::OK as i32
-    }
-
-
-    fn write(m: &mut Machine) -> i32 {
-        if let (Some(fd), Some(buf), Some(buf_len)) = (pop(m), pop(m), pop(m)) {
-            if let Err(code) = bounds_check(buf, buf_len) {
-                return code as i32;
-            }
-            let data: Vec<u8> = (buf..(buf + buf_len))
-                .map(|addr| m.unsafe_load(addr) as u8)
-                .collect();
-            let mut out: Box<dyn io::Write> = match fd {
-                1 => Box::new(io::stdout()),
-                2 => Box::new(io::stderr()),
-                _ => return RetCode::NotImplemented as i32,
-            };
-            let result = out.write(&data);
-            out.flush().unwrap();
-            match result {
-                Err(_) => RetCode::IOError as i32,
-                Ok(_) => RetCode::OK as i32,
-            }
-        } else {
-            RetCode::UnknownError as i32
-        }
-    }
-
-    fn bounds_check(buf: i32, buf_len: i32) -> Result<(), RetCode> {
-        if buf < segs::ADDR_SPACE.start || buf + buf_len > segs::ADDR_SPACE.end {
-            return Err(RetCode::AddressOutOfBounds);
-        }
-        Ok(())
-    }
-
-    fn read(m: &mut Machine) -> i32 {
-        if let (Some(fd), Some(buf), Some(buf_len)) = (pop(m), pop(m), pop(m)) {
-            if let Err(code) = bounds_check(buf, buf_len) {
-                return code as i32;
-            }
-            let mut data = vec![0; buf_len as usize];
-            let result = match fd {
-                1 => io::stdin().read(&mut data),
-                _ => return RetCode::NotImplemented as i32,
-            };
-            if let Err(_) = result {
-                return RetCode::IOError as i32;
-            }
-            for (addr, val) in (buf..(buf + buf_len)).zip(data) {
-                m.stack_store(addr, val as i32);
-            }
-            RetCode::OK as i32
-        } else {
-            RetCode::UnknownError as i32
-        }
-    }
-
-    macro_rules! def_env_call_list {
-        ( $($name:ident)+ ) => {
-            pub const CALL_LIST: &[(fn(&mut Machine) -> i32, &'static str)] = &[
-                $(
-                    ($name, stringify!($name)),
-                )+
-            ];
-        }
-    }
-
-    def_env_call_list![
-        exit
-        write
-        read
-    ];
-}
-
 pub fn ecall(m: &mut Machine, callcode: i32) {
-    if callcode < 0 || callcode >= env_call::CALL_LIST.len() as i32 {
+    if callcode < 0 || callcode >= environment::CALL_LIST.len() as i32 {
         m.set_status(MachineStatus::Error(MachineError::NoSuchEnvCall(callcode)));
         return;
     }
-    let (env_call_func, _) = env_call::CALL_LIST[callcode as usize];
+    let (env_call_func, _) = environment::CALL_LIST[callcode as usize];
     let retval = env_call_func(m);
     push(m, retval);
 }

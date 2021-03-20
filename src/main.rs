@@ -11,6 +11,7 @@ mod util;
 mod mem;
 mod assembler;
 mod encoder;
+mod environment;
 
 fn main() {
     let args: Vec<String> = env::args().collect();

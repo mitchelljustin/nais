@@ -7,7 +7,6 @@ use std::ops::RangeInclusive;
 use AssemblyError::*;
 use ParserError::*;
 
-use crate::isa;
 use crate::linker::{DebugInfo, Linker, LinkerError, TargetTerm};
 use crate::mem::addrs;
 
@@ -106,10 +105,13 @@ impl Assembler {
         self.linker.add_global_constant("sp", addrs::SP);
         self.linker.add_global_constant("fp", addrs::FP);
         self.linker.add_global_constant("retval", -3);
-        for (callcode, (_, call_name)) in isa::env_call::CALL_LIST.iter().enumerate() {
-            let const_name = format!(".ecall.{}", call_name);
+        for (callcode, (_, call_name)) in crate::environment::CALL_LIST.iter().enumerate() {
+            let const_name = format!(".cc.{}", call_name);
             self.linker.add_global_constant(&const_name, callcode as i32);
         }
+        self.linker.add_global_constant(".fd.stdin", 1);
+        self.linker.add_global_constant(".fd.stdout", 1);
+        self.linker.add_global_constant(".fd.stderr", 2);
     }
 
     pub fn process(&mut self, text: &str) {

@@ -37,14 +37,14 @@ pub mod segs {
         name: "code",
         addr_range: 0x1_0000..0x2_0000, // 64 KiW
     };
-    pub const DATA: Segment = Segment {
-        name: "data",
-        addr_range: 0x2_0000..0x4_0000, // 128 KiW
+    pub const HEAP: Segment = Segment {
+        name: "heap",
+        addr_range: 0x2_0000..0x8_0000, // 384 KiW
     };
     pub const ALL: &[&'static Segment] = &[
         &STACK,
         &CODE,
-        &DATA,
+        &HEAP,
     ];
     pub const ADDR_SPACE: Range<i32> = ALL[0].start()..ALL[ALL.len() - 1].end();
 }
