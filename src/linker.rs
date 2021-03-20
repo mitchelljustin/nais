@@ -10,7 +10,7 @@ use crate::mem::inst_loc_to_addr;
 
 #[derive(Clone)]
 pub struct DebugInfo {
-    pub call_frames: HashMap<String, CallFrame>,
+    pub call_frames: HashMap<String, TopLevelLabel>,
     pub frame_for_inst_addr: HashMap<i32, String>,
     pub resolved_idents: HashMap<i32, ResolvedTarget>,
 }
@@ -29,7 +29,7 @@ impl From<Linker> for DebugInfo {
     fn from(linker: Linker) -> Self {
         let mut info = DebugInfo::new();
         info.resolved_idents = linker.resolved_targets;
-        info.call_frames = linker.call_frames;
+        info.call_frames = linker.top_level_labels;
         info.frame_for_inst_addr = linker.frame_for_inst_addr;
         info
     }
@@ -37,8 +37,8 @@ impl From<Linker> for DebugInfo {
 
 #[derive(Copy, Clone, Debug)]
 pub enum LabelType {
-    Substitution,
-    Subroutine,
+    Global,
+    TopLevelLabel,
     InnerLabel,
     FrameVar,
 
@@ -56,17 +56,17 @@ pub struct ResolvedTarget {
 impl Display for LabelType {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            LabelType::Substitution => "glob",
-            LabelType::Subroutine => "sub",
-            LabelType::InnerLabel => "inner",
-            LabelType::FrameVar => "var",
+            LabelType::Global           => "glob",
+            LabelType::TopLevelLabel    => "label",
+            LabelType::InnerLabel       => "inner",
+            LabelType::FrameVar         => "var",
             _ => "",
         })
     }
 }
 
 #[derive(Clone)]
-pub struct CallFrame {
+pub struct TopLevelLabel {
     pub name: String,
     pub addr_range: Range<i32>,
     pub local_mappings: HashMap<String, i32>,
@@ -107,8 +107,8 @@ pub struct Linker {
     to_relocate: HashMap<usize, RelocationTarget>,
     resolved_targets: HashMap<i32, ResolvedTarget>,
 
-    call_frames: HashMap<String, CallFrame>,
-    cur_frame_name: String,
+    top_level_labels: HashMap<String, TopLevelLabel>,
+    pub(crate) cur_frame_name: String,
     frame_for_inst_addr: HashMap<i32, String>,
     global_mappings: HashMap<String, i32>,
 
@@ -121,7 +121,7 @@ impl Linker {
     pub fn new() -> Linker {
         Linker {
             instructions: Vec::new(),
-            call_frames: HashMap::new(),
+            top_level_labels: HashMap::new(),
             global_mappings: HashMap::new(),
             frame_for_inst_addr: HashMap::new(),
             to_relocate: HashMap::new(),
@@ -168,12 +168,16 @@ impl Linker {
         self.add_inst(opname, 0);
     }
 
-    pub fn add_subroutine(&mut self, name: &str) {
-        let next_addr = self.next_inst_addr();
+    pub fn add_top_level_label(&mut self, name: &str) {
         if self.cur_frame_name != "" {
-            self.cur_frame_mut().addr_range.end = next_addr;
+            self.end_current_frame();
         }
-        self.call_frames.insert(name.to_string(), CallFrame {
+        let next_addr = self.next_inst_addr();
+        self.add_global_constant(
+            &format!(".L.{}.start", name),
+            next_addr,
+        );
+        self.top_level_labels.insert(name.to_string(), TopLevelLabel {
             name: name.to_string(),
             addr_range: next_addr..-1,
             local_mappings: HashMap::new(),
@@ -189,22 +193,22 @@ impl Linker {
         self.cur_frame_mut().inner_labels.insert(name.to_string(), addr);
     }
 
-    fn cur_frame_mut(&mut self) -> &mut CallFrame {
-        match self.call_frames.get(&self.cur_frame_name) {
+    pub(crate) fn cur_frame_mut(&mut self) -> &mut TopLevelLabel {
+        match self.top_level_labels.get(&self.cur_frame_name) {
             Some(_) => {
-                self.call_frames.get_mut(&self.cur_frame_name).unwrap()
+                self.top_level_labels.get_mut(&self.cur_frame_name).unwrap()
             }
             None => {
                 const DEFAULT_ENTRY_LABEL: &str = "entry";
                 self.errors.push(LinkerError::NeedToDefineEntryLabel);
-                self.add_subroutine(DEFAULT_ENTRY_LABEL);
-                self.call_frames.get_mut(DEFAULT_ENTRY_LABEL).unwrap()
+                self.add_top_level_label(DEFAULT_ENTRY_LABEL);
+                self.top_level_labels.get_mut(DEFAULT_ENTRY_LABEL).unwrap()
             }
         }
     }
 
-    pub fn cur_frame(&self) -> &CallFrame {
-        self.call_frames.get(&self.cur_frame_name).unwrap()
+    pub fn cur_frame(&self) -> &TopLevelLabel {
+        self.top_level_labels.get(&self.cur_frame_name).unwrap()
     }
 
     pub fn add_local_constant(&mut self, name: &str, value: i32) {
@@ -232,13 +236,12 @@ impl Linker {
         frame.params_size += size;
     }
 
-    pub fn add_substitution(&mut self, name: &str, value: i32) {
+    pub fn add_global_constant(&mut self, name: &str, value: i32) {
         self.global_mappings.insert(name.to_string(), value);
     }
 
-    pub fn add_global_constant(&mut self, name: &str, value: i32) {
+    pub fn add_raw_word(&mut self, value: i32) {
         let addr = self.next_inst_addr();
-        self.global_mappings.insert(name.to_string(), addr);
         let inst = Inst {
             addr:   Some(addr),
             op:     OP_INVALID,
@@ -249,28 +252,43 @@ impl Linker {
     }
 
     pub fn finish(&mut self) {
-        self.cur_frame_mut().addr_range.end = self.next_inst_addr();
+        self.end_current_frame();
+    }
+
+    fn end_current_frame(&mut self) {
+        let next_addr = self.next_inst_addr();
+        self.cur_frame_mut().addr_range.end = next_addr;
+        self.add_global_constant(
+            &format!(".L.{}.end", self.cur_frame_name),
+            next_addr,
+        );
+        self.add_global_constant(
+            &format!(".L.{}.len", self.cur_frame_name),
+            self.cur_frame().addr_range.len() as i32,
+        );
     }
 
     fn resolve_ident(&self, inst_loc: usize, name: &str) -> Option<(i32, LabelType)> {
         use LabelType::*;
-        let inst_addr = inst_loc_to_addr(inst_loc);
+        // Global mapping
         if let Some(&value) = self.global_mappings.get(name) {
-            return Some((value, Substitution));
+            return Some((value, Global));
         }
-        if let Some(frame) = self.call_frames.get(name) {
-            let value = Linker::offset_from_inst(
-                frame.addr_range.start,
+        // Top level label
+        let inst_addr = inst_loc_to_addr(inst_loc);
+        if let Some(label) = self.top_level_labels.get(name) {
+            let value = Linker::pc_relative(
+                label.addr_range.start,
                 inst_addr,
             );
-            return Some((value, Subroutine));
+            return Some((value, TopLevelLabel));
         }
         // Local frame
         let frame_name = self.frame_for_inst_addr.get(&inst_addr)?;
-        let frame = self.call_frames.get(frame_name)?;
+        let frame = self.top_level_labels.get(frame_name)?;
         // Local code (inner label)
         if let Some(&addr) = frame.inner_labels.get(name) {
-            let value = Linker::offset_from_inst(
+            let value = Linker::pc_relative(
                 addr,
                 inst_addr,
             );
@@ -369,7 +387,7 @@ impl Linker {
         Ok(bin)
     }
 
-    fn offset_from_inst(target_addr: i32, inst_addr: i32) -> i32 {
+    fn pc_relative(target_addr: i32, inst_addr: i32) -> i32 {
         target_addr - inst_addr - 1
     }
 }

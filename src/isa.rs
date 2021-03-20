@@ -40,15 +40,14 @@ pub fn addsp(m: &mut Machine, delta: i32) {
 
 pub fn load(m: &mut Machine, offset: i32) {
     if let Some(addr) = pop(m) {
-        if let Some(val) = m.stack_load(addr + offset) {
-            push(m, val);
-        }
+        let val = m.unsafe_load(addr + offset);
+        push(m, val);
     }
 }
 
 pub fn store(m: &mut Machine, offset: i32) {
     if let (Some(addr), Some(val)) = (pop(m), pop(m)) {
-        m.stack_store(addr + offset, val);
+        m.unsafe_store(addr + offset, val);
     }
 }
 
@@ -68,6 +67,16 @@ pub fn storef(m: &mut Machine, offset: i32) {
     if let Some(val) = pop(m) {
         m.stack_store(fp + offset, val);
     }
+}
+
+pub fn loadr(m: &mut Machine, offset: i32) {
+    let pc = m.getpc();
+    loadi(m, pc + offset);
+}
+
+pub fn storer(m: &mut Machine, offset: i32) {
+    let pc = m.getpc();
+    storei(m, pc + offset);
 }
 
 pub mod env_call {
@@ -106,11 +115,13 @@ pub mod env_call {
             let data: Vec<u8> = (buf..(buf + buf_len))
                 .map(|addr| m.unsafe_load(addr) as u8)
                 .collect();
-            let result = match fd {
-                1 => io::stdout().write(&data),
-                2 => io::stderr().write(&data),
+            let mut out: Box<dyn io::Write> = match fd {
+                1 => Box::new(io::stdout()),
+                2 => Box::new(io::stderr()),
                 _ => return RetCode::NotImplemented as i32,
             };
+            let result = out.write(&data);
+            out.flush().unwrap();
             match result {
                 Err(_) => RetCode::IOError as i32,
                 Ok(_) => RetCode::OK as i32,
@@ -390,7 +401,7 @@ def_op_list![
     add sub mul div rem and or xor sar shl shr
     addi subi muli divi remi andi ori xori sari shli shri
     beq bne blt bge
-    load store loadi storei loadf storef
+    load store loadi storei loadf storef loadr storer
     jump jal ret
     ecall ebreak
 ];

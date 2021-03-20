@@ -1,4 +1,4 @@
-use std::{fmt, fs};
+use std::{cmp, fmt, fs};
 use std::fmt::Formatter;
 use std::io;
 use std::num::ParseIntError;
@@ -44,8 +44,8 @@ impl fmt::Display for AssemblyError {
 #[derive(Debug)]
 pub enum ParserError {
     WrongNumberOfArguments { verb: String, expected: RangeInclusive<usize>, actual: usize },
-    InvalidIntegerArg(ParseIntError),
-    OnlyAsciiCharsSupported { st: String },
+    InvalidLiteral(ParseIntError),
+    SyntaxError { reason: String },
 
     MultipleErrors(Vec<ParserError>),
 
@@ -102,13 +102,13 @@ impl Assembler {
     }
 
     fn add_default_constants(&mut self) {
-        self.linker.add_substitution("pc", addrs::PC);
-        self.linker.add_substitution("sp", addrs::SP);
-        self.linker.add_substitution("fp", addrs::FP);
-        self.linker.add_substitution("retval", -3);
+        self.linker.add_global_constant("pc", addrs::PC);
+        self.linker.add_global_constant("sp", addrs::SP);
+        self.linker.add_global_constant("fp", addrs::FP);
+        self.linker.add_global_constant("retval", -3);
         for (callcode, (_, call_name)) in isa::env_call::CALL_LIST.iter().enumerate() {
             let const_name = format!(".ecall.{}", call_name);
-            self.linker.add_substitution(&const_name, callcode as i32);
+            self.linker.add_global_constant(&const_name, callcode as i32);
         }
     }
 
@@ -146,27 +146,72 @@ impl Assembler {
         }
         let verb = words[0];
         if verb.ends_with(":") {
-            let name = &verb[..verb.len() - 1];
-            if verb.starts_with("_") {
-                self.linker.add_inner_label(name);
-            } else {
-                self.linker.add_subroutine(name);
-            }
+            self.process_label(verb);
             return Ok(());
         }
         let args = &words[1..];
         self.process_statement(verb, args)
     }
 
+    fn process_label(&mut self, name: &str) {
+        let name = &name[..name.len() - 1];
+        if name.starts_with("_") {
+            self.linker.add_inner_label(name);
+        } else {
+            self.linker.add_top_level_label(name);
+        }
+    }
+
     fn process_statement(&mut self, verb: &str, args: &[&str]) -> Result<(), ParserError> {
         match verb {
             ".define" => {
                 let (name, value) = Assembler::expect_name_and_literal(verb, args)?;
-                self.linker.add_substitution(name, value);
+                self.linker.add_global_constant(name, value);
             }
             ".word" => {
-                let (name, value) = Assembler::expect_name_and_literal(verb, args)?;
-                self.linker.add_global_constant(name, value);
+                if args.is_empty() {
+                    return Err(SyntaxError { reason: ".word needs arguments".to_string() });
+                }
+                let mut bytes: Vec<u8> = vec![];
+                for arg in args {
+                    if let Some(val) = Assembler::parse_hex_word(arg) {
+                        self.linker.add_raw_word(val);
+                    } else if let Ok(val) = Assembler::parse_integer(arg) {
+                        bytes.push(val as u8);
+                    } else if let Ok(st) = Assembler::expect_string(arg) {
+                        bytes.extend(st.bytes());
+                    } else {
+                        return Err(SyntaxError {
+                            reason: ".word expects literals or quoted strings".to_string(),
+                        });
+                    }
+                }
+                let nbytes = bytes.len();
+                if nbytes == 0 {
+                    return Ok(());
+                }
+                let num_words = cmp::max(1, nbytes / 4);
+                for i in 0..num_words {
+                    let end = cmp::min(nbytes, (i + 1) * 4);
+                    let word_bytes = &bytes[i * 4..end];
+                    let mut word = 0i32;
+                    for (i, b) in word_bytes.iter().enumerate() {
+                        word |= (*b as i32) << (24 - i * 8);
+                    }
+                    self.linker.add_raw_word(word);
+                }
+            }
+            ".string" => {
+                for arg in args {
+                    if let Ok(val) = Assembler::parse_integer(arg) {
+                        self.linker.add_raw_word(val);
+                        continue;
+                    }
+                    let st = Assembler::expect_string(arg)?;
+                    for ch in st.chars() {
+                        self.linker.add_raw_word(ch as i32);
+                    }
+                }
             }
             ".param" => {
                 let (name, size) = Assembler::expect_name_and_literal(verb, args)?;
@@ -224,22 +269,42 @@ impl Assembler {
         Ok(())
     }
 
+    fn expect_string(arg: &str) -> Result<&str, ParserError> {
+        if arg.len() < 2 || &arg[0..1] != "\"" || &arg[arg.len() - 1..] != "\"" {
+            return Err(SyntaxError { reason: format!("bad .string formatting: {}", arg) });
+        }
+        let st = &arg[1..arg.len() - 1];
+        Ok(st)
+    }
+
+    fn parse_hex_word(arg: &str) -> Option<i32> {
+        if !arg.starts_with("0x") {
+            return None;
+        }
+        let arg = &arg[2..];
+        if arg.len() != 8 {
+            return None;
+        }
+        match u32::from_str_radix(arg, 16) {
+            Ok(val) => Some(val as i32),
+            Err(_) => None,
+        }
+    }
+
     fn parse_integer(arg: &str) -> Result<i32, ParserError> {
         if arg.starts_with("0x") {
             return match u32::from_str_radix(&arg[2..], 16) {
                 Ok(arg) => Ok(arg as i32),
-                Err(err) => Err(InvalidIntegerArg(err)),
+                Err(err) => Err(InvalidLiteral(err)),
             };
         }
         if let Ok(arg) = i32::from_str_radix(arg, 10) {
             return Ok(arg);
         }
         if arg.len() == 3 && arg.starts_with("'") && arg.ends_with("'") {
-            let char = &arg[1..2];
-            if !char.is_ascii() {
-                return Err(OnlyAsciiCharsSupported { st: char.to_string() });
-            }
-            return Ok(char.bytes().next().unwrap() as i32);
+            let mut chars = arg.chars();
+            chars.next();
+            return Ok(chars.next().unwrap() as i32);
         }
         Err(_ArgIsIdent)
     }

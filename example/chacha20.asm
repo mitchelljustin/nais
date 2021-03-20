@@ -1,19 +1,10 @@
 .define STDIN 1
 .define STDOUT 1
+.define STDERR 2
 
 .define EXIT_OK 0
 
 .define ROUNDS 20
-
-entry:
-    jump main
-
-.word C_0         0x65787061 ;expa
-.word C_1         0x6e642033 ;nd 3
-.word C_2         0x322d6279 ;2-by
-.word C_3         0x7465206b ;te k
-.word NONCE_0     0x01234567
-.word NONCE_1     0x89abcdef
 
 main:
     .local exitcode 1
@@ -43,21 +34,20 @@ main:
     push 0
     storef pos
 
-    ; read key from STDIN
-    push .sizeof.key
-    loadf key.addr
-    push STDIN
-    ecall .ecall.read
-    addsp -1
+    push key.addr
+    push
+    jal read_key
+
+    addsp -2
 
     ; initialize state
-    loadi C_0
+    loadr STATE.CONST, 0
     storef state, 0
-    loadi C_1
+    loadr STATE.CONST, 1
     storef state, 1
-    loadi C_2
+    loadr STATE.CONST, 2
     storef state, 2
-    loadi C_3
+    loadr STATE.CONST, 3
     storef state, 3
 
     loadf key, 0
@@ -83,9 +73,9 @@ main:
     loadf pos
     storef state, 13
 
-    loadi NONCE_0
+    loadr STATE.NONCE, 0
     storef state, 14
-    loadi NONCE_1
+    loadr STATE.NONCE, 1
     storef state, 15
     ; done initializing state
 
@@ -145,7 +135,6 @@ main:
     push .sizeof.state
     loadf state.addr
     push STDOUT
-    ebreak
     ecall .ecall.write
     storef exitcode
 
@@ -160,6 +149,61 @@ main:
     _err:
     loadf exitcode
     ecall .ecall.exit
+
+read_key:
+    .param out.addr 1
+    .local buf 64
+    .local buf.addr 1
+    .local word 1
+    .local i 1
+    .start_frame
+
+    loadi fp
+    addi buf
+    storef buf.addr
+
+    push .L.KEY_PROMPT.len
+    loadi pc
+    addi 2, KEY_PROMPT
+    push STDERR
+    ecall .ecall.write
+    storef retval
+
+    loadf retval
+    push 0
+    bne _end
+
+    push .sizeof.buf
+    loadf buf.addr
+    push STDIN
+    ecall .ecall.read
+    storef retval
+
+    loadf retval
+    push 0
+    bne _end
+
+    push 0
+    storef i
+    _loop:
+        loadf buf.addr
+        loadf i
+        add
+        load
+
+        ; TODO: compress 64 buf bytes into 8x32bit key
+
+        loadf i
+        addi 1
+        storef i
+
+        push .sizeof.buf
+        loadf i
+        blt _loop
+
+    _end:
+    .end_frame
+    ret
 
 double_round:
     .param state.addr 1
@@ -382,3 +426,16 @@ memcpy:
 
     .end_frame
     ret
+
+KEY_PROMPT:
+    .string "KEY>" 0x20 ; space
+
+STATE.CONST:
+    .word "expa"
+    .word "nd" 0x20 "3"
+    .word "2-by"
+    .word "te" 0x20 "k"
+
+STATE.NONCE:
+    .word "yolo"
+    .word "swag"
