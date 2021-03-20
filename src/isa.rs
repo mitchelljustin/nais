@@ -400,7 +400,7 @@ def_op_list![
     push addsp
     add sub mul div rem and or xor sar shl shr
     addi subi muli divi remi andi ori xori sari shli shri
-    beq bne blt bge
+    beq bne blt bge bgt ble
     load store loadi storei loadf storef loadr storer
     jump jal ret
     ecall ebreak
