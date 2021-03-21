@@ -1,5 +1,3 @@
-.define ROW_SIZE 1024
-
 .define NOT_FOUND -1
 .define NEWLINE 0x0a
 
@@ -16,13 +14,16 @@ sum_rows:
     .local buf 64
     .local buf.len 1
     .local buf.addr 1
+    .local buf.ptr 1
     .local row 64
     .local row.addr 1
+    .local col.addr 1
     .local columns.addr 1
-    .local columns.len 1
+    .local ncols 1
     .local sums.addr 1
-    .local newline_idx 1
-    .local i 0
+    .local line_len 1
+    .local i 1
+    .local x 1
     .start_frame
 
     loadi fp
@@ -30,12 +31,12 @@ sum_rows:
     storef path.addr
 
     loadi fp
-    addi row
-    storef row.addr
-
-    loadi fp
     addi buf
     storef buf.addr
+
+    loadi fp
+    addi row
+    storef row.addr
 
     jump _preset_path
     _user_path:
@@ -91,30 +92,189 @@ sum_rows:
     push NEWLINE
     push
     jal index_of
-    storef newline_idx
+    storef line_len
     addsp -3
 
-    loadf newline_idx
+    loadf line_len
     loadf buf.addr
     push
     jal num_columns
-    storef columns.len
+    storef ncols
     addsp -2
 
-    loadf columns.len
+    loadf ncols
     muli 2
     ; [ptr0 len0 ptr1 len1 .. ptr(n) len(n)]
     ecall .cc.malloc
     storef columns.addr
 
     loadf columns.addr
-    loadf newline_idx
+    loadf line_len
     loadf buf.addr
     push
-    jal load_row
+    jal read_row
     addsp -4
-    ebreak
 
+    loadf ncols
+    ecall .cc.malloc
+    storef sums.addr
+
+    push 0
+    storef i
+    _init_sums_loop:
+        push 0
+        loadf sums.addr
+        loadf i
+        add
+        store
+
+        loadf i
+        addi 1
+        storef i
+
+        loadf i
+        loadf ncols
+        blt _init_sums_loop
+    loadf buf.addr
+    storef buf.ptr
+    _sum_loop:
+        loadf buf.ptr
+        loadf line_len
+        add 1 ; for the newline
+        storef buf.ptr
+
+        loadf line_len
+        loadf buf.len
+        sub 1
+        storef buf.len
+
+        loadf buf.len
+        loadf buf.ptr
+        push NEWLINE
+        push
+        jal index_of
+        storef line_len
+        addsp -3
+
+        loadf line_len
+        push NOT_FOUND
+        beq _sum_done
+
+        loadf row.addr
+        loadf line_len
+        loadf buf.ptr
+        push
+        jal read_row
+        addsp -4
+
+        push 0
+        storef i
+        _col_loop:
+            ; x = dec_to_int(row[i*2], row[i*2+1])
+            loadf row.addr
+            loadf i
+            muli 2
+            add
+            storef col.addr
+
+            loadf col.addr
+            load 1 ; len
+            loadf col.addr
+            load 0 ; ptr
+            push
+            jal dec_to_int
+            storef x
+            addsp -2
+
+            ; sums[i] = sums[i] + x
+            loadf sums.addr
+            loadf i
+            add
+            load
+            loadf x
+            add
+            loadf sums.addr
+            loadf i
+            add
+            store
+
+            loadf i
+            addi 1
+            storef i
+
+            loadf i
+            loadf ncols
+            blt _col_loop
+        jump _sum_loop
+    _sum_done:
+    push 0
+    storef i
+    _print_loop:
+        loadf columns.addr
+        loadf i
+        muli 2
+        add
+        storef col.addr
+
+        loadf col.addr
+        load 1 ; len
+        loadf col.addr
+        load 0 ; ptr
+        loadf path.addr
+        push
+        jal memcpy
+        addsp -4
+
+        loadf col.addr
+        load 1 ; len
+        storef path.len
+
+        push '='
+        loadf path.addr
+        loadf path.len
+        add
+        store
+        loadf path.len
+        addi 1
+        storef path.len
+
+        ; path.len += int_to_dec(sums[i], &path[path.len]);
+        loadf path.addr
+        loadf path.len
+        add
+        loadf sums.addr
+        loadf i
+        add
+        load
+        push
+        jal int_to_dec
+        loadf path.len
+        add
+        storef path.len
+        addsp -2
+
+        push NEWLINE
+        loadf path.addr
+        loadf path.len
+        add
+        store
+        loadf path.len
+        addi 1
+        storef path.len
+
+        loadf path.len
+        loadf path.addr
+        push .fd.stdout
+        ecall .cc.write
+        addsp -1
+
+        loadf i
+        addi 1
+        storef i
+
+        loadf i
+        loadf ncols
+        blt _print_loop
     _ok:
     push 0
     storef retval
@@ -122,7 +282,82 @@ sum_rows:
     .end_frame
     ret
 
-load_row:
+dec_to_int:
+    .param decimal.addr 1
+    .param decimal.len 1
+    .local i 1
+    .local digit 1
+    .start_frame
+
+    push 0
+    storef retval
+
+    push 0
+    storef i
+    _loop:
+        loadf retval
+        muli 10
+        storef retval
+
+        ; digit = decimal[i] - '0';
+        loadf decimal.addr
+        loadf i
+        add
+        load
+        subi '0'
+        storef digit
+
+        loadf digit
+        loadf retval
+        add
+        storef retval
+
+        loadf i
+        addi 1
+        storef i
+
+        loadf i
+        loadf decimal.len
+        blt _loop
+
+    .end_frame
+    ret
+
+int_to_dec:
+    .param x 1
+    .param dst.addr 1 ; at least size 11
+    .local i 1
+    .start_frame
+
+    push 0
+    storef i
+    _loop:
+        ; dst[i] = (x % 10) + '0'
+        loadf x
+        remi 10
+        addi '0'
+        loadf dst.addr
+        loadf i
+        add
+        store
+
+        loadf x
+        divi 10
+        storef x
+
+        loadf i
+        addi 1
+        storef i
+
+        loadf x
+        push 0
+        bne _loop
+    loadf i
+    storef retval
+    .end_frame
+    ret
+
+read_row:
     .param src.addr 1
     .param src.len 1
     .param row.addr 1 ; row addr must have size >= (2 * ncols)
@@ -253,6 +488,7 @@ num_columns:
         load
         push ','
         bne _next
+
         loadf n
         addi 1
         storef n

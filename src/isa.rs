@@ -300,11 +300,11 @@ macro_rules! def_op_list {
 def_op_list![
     invald
     push addsp
+    loadi storei loadf storef load store loadr storer
+    jump jal ret
     add sub mul div rem and or xor sar shl shr
     addi subi muli divi remi andi ori xori sari shli shri
-    beq bne blt bge bgt ble
-    load store loadi storei loadf storef loadr storer
-    jump jal ret
+    beq bne blt ble bge bgt
     ecall ebreak
 ];
 

@@ -124,10 +124,9 @@ fn read(m: &mut Machine) -> i32 {
             Ok(n) => n as i32,
         };
         match write_machine_memory(m, buf_ptr, nread, data) {
-            Ok(_) => {}
+            Ok(_) => nread,
             Err(code) => return code as i32,
         }
-        nread
     } else {
         ArgsInvalid as i32
     }

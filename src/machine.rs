@@ -206,7 +206,7 @@ impl Machine {
                 "pm" => {
                     match int_args[..] {
                         [start, len] =>
-                            println!("{}", self.mem_dump(start..(start + len + 1))),
+                            println!("{}", self.mem_dump(start..(start + len))),
                         [start] =>
                             println!("{}", self.mem_dump(start..(start + 1))),
                         _ =>
@@ -298,7 +298,8 @@ impl Machine {
                 .get(frame)
                 .unwrap()
                 .local_mappings.iter()
-                .map(|(name, off)| (off, name))
+                .filter(|(name, _)| name.len() > 0 && !name.starts_with("."))
+                .map(|(name, offset)| (offset, name))
                 .collect(),
             None => HashMap::new(),
         };
@@ -319,12 +320,13 @@ impl Machine {
                             ""
                     }.to_string(),
                     match addr - fp {
+                        -3 => " retval".to_string(),
                         -2 => " retaddr".to_string(),
                         -1 => " saved fp".to_string(),
                         offset => {
                             match var_for_offset.get(&offset) {
-                                None => " ".repeat(13),
-                                Some(n) if n.starts_with(".") => " ".repeat(13),
+                                None =>
+                                    " ".repeat(13),
                                 Some(var_name) =>
                                     format!(" {:12}", var_name),
                             }
