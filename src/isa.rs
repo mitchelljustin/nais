@@ -23,13 +23,13 @@ pub fn pop(m: &mut Machine) -> Option<i32> {
 }
 
 pub fn loadi(m: &mut Machine, addr: i32) {
-    let val = m.unsafe_load(addr);
+    let val = m.load(addr);
     push(m, val);
 }
 
 pub fn storei(m: &mut Machine, addr: i32) {
     if let Some(val) = pop(m) {
-        m.unsafe_store(addr, val);
+        m.store(addr, val);
     }
 }
 
@@ -40,14 +40,14 @@ pub fn addsp(m: &mut Machine, delta: i32) {
 
 pub fn load(m: &mut Machine, offset: i32) {
     if let Some(addr) = pop(m) {
-        let val = m.unsafe_load(addr + offset);
+        let val = m.load(addr + offset);
         push(m, val);
     }
 }
 
 pub fn store(m: &mut Machine, offset: i32) {
     if let (Some(addr), Some(val)) = (pop(m), pop(m)) {
-        m.unsafe_store(addr + offset, val);
+        m.store(addr + offset, val);
     }
 }
 
@@ -81,7 +81,7 @@ pub fn storer(m: &mut Machine, offset: i32) {
 
 pub fn ecall(m: &mut Machine, callcode: i32) {
     if callcode < 0 || callcode >= environment::CALL_LIST.len() as i32 {
-        m.set_status(MachineStatus::Error(MachineError::NoSuchEnvCall(callcode)));
+        m.set_error(MachineError::NoSuchEnvCall(callcode));
         return;
     }
     let (env_call_func, _) = environment::CALL_LIST[callcode as usize];

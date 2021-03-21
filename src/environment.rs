@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+use std::fs::{File, OpenOptions};
 use std::io;
 use std::io::{Read, Write};
 
@@ -7,15 +9,13 @@ use crate::isa::*;
 use crate::machine::{Machine, MachineError};
 use crate::machine::MachineStatus::Stopped;
 use crate::mem::segs;
-use std::collections::HashMap;
-use std::fs::{File, OpenOptions};
 
 const FIRST_FD: i32 = 3;
 
 
 pub(crate) struct Environment {
     heap_ptr: i32,
-    open_files: HashMap<i32, File>,
+    files_open: HashMap<i32, File>,
     next_fd: i32,
 }
 
@@ -24,7 +24,7 @@ impl Default for Environment {
     fn default() -> Self {
         Environment {
             heap_ptr: segs::HEAP.start(),
-            open_files: Default::default(),
+            files_open: Default::default(),
             next_fd: FIRST_FD,
         }
     }
@@ -43,20 +43,20 @@ fn exit(m: &mut Machine) -> i32 {
     match pop(m) {
         Some(0) =>
             m.set_status(Stopped),
-        Some(status) =>
-            m.set_error(MachineError::ProgramExit(status)),
-        None => {},
+        Some(errcode) =>
+            m.set_error(MachineError::ProgramExit(errcode)),
+        None => {}
     };
     OK as i32
 }
 
 fn open(m: &mut Machine) -> i32 {
-    if let (Some(path_buf), Some(buf_len)) = (pop(m), pop(m)) {
-        let data = match read_data_from_machine(m, path_buf, buf_len) {
-            Err(code) => return code,
+    if let (Some(buf_ptr), Some(buf_len)) = (pop(m), pop(m)) {
+        let path_data = match read_machine_memory(m, buf_ptr, buf_len) {
+            Err(code) => return code as i32,
             Ok(data) => data,
         };
-        let path = match String::from_utf8(data) {
+        let path = match String::from_utf8(path_data) {
             Err(_) => return UTF8Error as i32,
             Ok(s) => s,
         };
@@ -66,7 +66,7 @@ fn open(m: &mut Machine) -> i32 {
         };
         let fd = m.env.next_fd;
         m.env.next_fd += 1;
-        m.env.open_files.insert(fd, file);
+        m.env.files_open.insert(fd, file);
         fd
     } else {
         ArgsInvalid as i32
@@ -74,51 +74,47 @@ fn open(m: &mut Machine) -> i32 {
 }
 
 fn write(m: &mut Machine) -> i32 {
-    if let (Some(fd), Some(buf), Some(buf_len)) = (pop(m), pop(m), pop(m)) {
-        let data = match read_data_from_machine(m, buf, buf_len) {
+    if let (Some(fd), Some(buf_ptr), Some(buf_len)) = (pop(m), pop(m), pop(m)) {
+        let data = match read_machine_memory(m, buf_ptr, buf_len) {
             Err(code) => return code as i32,
             Ok(data) => data,
         };
-        let mut writer: Box<dyn io::Write> = match fd {
-            1 => Box::new(io::stdout()),
-            2 => Box::new(io::stderr()),
-            fd => match m.env.open_files.get(&fd) {
-                None => return InvalidFileDescriptor as i32,
-                Some(file) => Box::new(file),
-            },
+        let result = {
+            let mut writer: Box<dyn io::Write> = match fd {
+                1 => Box::new(io::stdout()),
+                2 => Box::new(io::stderr()),
+                fd => match m.env.files_open.get(&fd) {
+                    Some(file) => Box::new(file),
+                    None => return InvalidFileDescriptor as i32,
+                },
+            };
+            match writer.write(&data) {
+                Ok(n) => {
+                    writer.flush().unwrap();
+                    Ok(n)
+                }
+                Err(err) => Err(err),
+            }
         };
-        let result = writer.write(&data);
-        writer.flush().unwrap();
         match result {
             Err(_) => GenericIOError as i32,
-            Ok(n) => n as i32,
+            Ok(nwritten) => nwritten as i32,
         }
     } else {
         ArgsInvalid as i32
     }
 }
 
-fn read_data_from_machine(m: &mut Machine, buf: i32, buf_len: i32) -> Result<Vec<u8>, RetCode> {
-    if !bounds_check(buf, buf_len) {
-        return Err(AddressOutOfBounds);
-    }
-    Ok((buf..(buf + buf_len))
-        .map(|addr| m.unsafe_load(addr) as u8)
-        .collect())
-}
-
 fn read(m: &mut Machine) -> i32 {
-    if let (Some(fd), Some(buf), Some(buf_len)) = (pop(m), pop(m), pop(m)) {
-        if let Err(code) = bounds_check(buf, buf_len) {
-            return code as i32;
-        }
+    if let (Some(fd), Some(buf_ptr), Some(buf_len)) = (pop(m), pop(m), pop(m)) {
         let mut data = vec![0; buf_len as usize];
         let result = {
             let mut reader: Box<dyn io::Read> = match fd {
                 1 => Box::new(io::stdin()),
-                fd => match m.env.open_files.get(&fd) {
-                    None => return InvalidFileDescriptor as i32,
+                2 => return InvalidFileDescriptor as i32,
+                fd => match m.env.files_open.get(&fd) {
                     Some(file) => Box::new(file),
+                    None => return InvalidFileDescriptor as i32,
                 },
             };
             reader.read(&mut data)
@@ -127,8 +123,9 @@ fn read(m: &mut Machine) -> i32 {
             Err(_) => return GenericIOError as i32,
             Ok(n) => n as i32,
         };
-        for (addr, val) in (buf..(buf + buf_len)).zip(data) {
-            m.unsafe_store(addr, val as i32);
+        match write_machine_memory(m, buf_ptr, nread, data) {
+            Ok(_) => {}
+            Err(code) => return code as i32,
         }
         nread
     } else {
@@ -149,8 +146,26 @@ fn malloc(m: &mut Machine) -> i32 {
     }
 }
 
-fn bounds_check(buf: i32, buf_len: i32) -> bool {
-    buf >= segs::ADDR_SPACE.start && (buf + buf_len) < segs::ADDR_SPACE.end
+fn read_machine_memory(m: &mut Machine, buf_ptr: i32, buf_len: i32) -> Result<Vec<u8>, RetCode> {
+    bounds_check(buf_ptr, buf_len)?;
+    Ok((buf_ptr..(buf_ptr + buf_len))
+        .map(|addr| m.load(addr) as u8)
+        .collect())
+}
+
+fn write_machine_memory(m: &mut Machine, buf_ptr: i32, buf_len: i32, data: Vec<u8>) -> Result<(), RetCode> {
+    bounds_check(buf_ptr, buf_len)?;
+    for (addr, val) in (buf_ptr..(buf_ptr + buf_len)).zip(data) {
+        m.store(addr, val as i32);
+    }
+    Ok(())
+}
+
+fn bounds_check(buf_ptr: i32, buf_len: i32) -> Result<(), RetCode> {
+    if buf_ptr < segs::ADDR_SPACE.start || (buf_ptr + buf_len) >= segs::ADDR_SPACE.end {
+        return Err(AddressOutOfBounds);
+    }
+    Ok(())
 }
 
 macro_rules! def_env_call_list {

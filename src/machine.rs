@@ -29,6 +29,7 @@ pub enum MachineError {
     NoSuchEnvCall(i32),
     LoadAddressOutOfBounds { addr: i32 },
     StoreAddressOutOfBounds { addr: i32 },
+    AttemptedWriteToCodeSegment { addr: i32 },
     MaxCyclesReached,
 }
 
@@ -74,7 +75,7 @@ impl Machine {
             self.set_error(StackAccessSegFault { addr });
             return None;
         }
-        Some(self.unsafe_load(addr))
+        Some(self.load(addr))
     }
 
     pub fn stack_store(&mut self, addr: i32, val: i32) -> bool {
@@ -95,7 +96,7 @@ impl Machine {
             self.set_error(MachineError::IllegalDirectWritePC);
             return false;
         }
-        self.unsafe_store(addr, val);
+        self.store(addr, val);
         true
     }
 
@@ -107,21 +108,24 @@ impl Machine {
         segs::CODE.contains(addr)
     }
 
-    pub fn unsafe_store(&mut self, addr: i32, val: i32) {
-        if segs::ADDR_SPACE.contains(&addr) {
-            self.mem[addr] = val;
-        } else {
-            self.set_error(StoreAddressOutOfBounds { addr });
+    pub fn store(&mut self, addr: i32, val: i32) {
+        if segs::CODE.contains(addr) {
+            self.set_error(AttemptedWriteToCodeSegment { addr });
+            return;
         }
+        if !segs::ADDR_SPACE.contains(&addr) {
+            self.set_error(StoreAddressOutOfBounds { addr });
+            return;
+        }
+        self.mem[addr] = val;
     }
 
-    pub fn unsafe_load(&mut self, addr: i32) -> i32 {
-        if segs::ADDR_SPACE.contains(&addr) {
-            self.mem[addr]
-        } else {
+    pub fn load(&mut self, addr: i32) -> i32 {
+        if !segs::ADDR_SPACE.contains(&addr) {
             self.set_error(LoadAddressOutOfBounds { addr });
-            0
+            return 0;
         }
+        self.mem[addr]
     }
 
     pub fn setpc(&mut self, newpc: i32) {
@@ -129,7 +133,7 @@ impl Machine {
             self.set_error(ImminentPCSegFault { newpc });
             return;
         }
-        self.unsafe_store(addrs::PC, newpc);
+        self.store(addrs::PC, newpc);
     }
 
     pub fn setsp(&mut self, newsp: i32) {
@@ -137,7 +141,7 @@ impl Machine {
             self.set_error(IllegalSPReductionBelowMin { newsp });
             return;
         }
-        self.unsafe_store(addrs::SP, newsp);
+        self.store(addrs::SP, newsp);
     }
 
     pub fn breakpoint(&mut self) {
@@ -181,7 +185,7 @@ impl Machine {
                         [len] =>
                             println!("{}", self.code_dump_around_pc(-len..len + 1)),
                         [] =>
-                            println!("{}", self.code_dump_around_pc(-8..9)),
+                            println!("{}", self.code_dump_around_pc(-15..16)),
                         _ => {
                             println!("format: pc addr [range]");
                         }
@@ -200,9 +204,19 @@ impl Machine {
                     }
                 }
                 "pm" => {
+                    match int_args[..] {
+                        [start, len] =>
+                            println!("{}", self.mem_dump(start..(start + len + 1))),
+                        [start] =>
+                            println!("{}", self.mem_dump(start..(start + 1))),
+                        _ =>
+                            println!("format: pm start [len]"),
+                    }
+                }
+                "st" => {
                     println!("{:?}", self);
                 }
-                "x" | "exit" => {
+                "x" => {
                     self.set_status(Stopped);
                     return;
                 }
@@ -331,12 +345,31 @@ impl Machine {
             .join("\n")
     }
 
+    pub fn mem_dump(&self, addr_range: Range<i32>) -> String {
+        addr_range
+            .map(|addr| {
+                if !segs::ADDR_SPACE.contains(&addr) {
+                    return "INVALID".to_string();
+                }
+                let val = self.mem[addr];
+                let maybe_char =
+                    if (0x20..=0x7f).contains(&val) {
+                        format!(" '{}'", char::from(val as u8))
+                    } else {
+                        "".to_string()
+                    };
+                format!("{:01x} {:04x}: {:8x} [{:12}]{}", addr >> 16, addr & 0xffff, val, val, maybe_char)
+            })
+            .collect::<Vec<String>>()
+            .join("\n")
+    }
+
     pub fn formatted_stack_val(&self, addr: i32) -> Option<String> {
         if !self.stack_access_ok(addr) {
             return None;
         }
         let val = self.mem[addr];
-        Some(format!("{:04x}. {:8x} [{:12}]", addr, val, val))
+        Some(format!("{:04x}: {:8x} [{:12}]", addr, val, val))
     }
 
     pub fn new() -> Machine {
