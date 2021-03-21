@@ -141,21 +141,31 @@ load_row:
     push 0
     storef i
     _loop:
+        loadf col.addr
+        loadf row.addr
+        store
+
         loadf i
         loadf src.len
         sub ; TOP = src.len - i
         loadf col.addr
         push ','
         push
-        ebreak
         jal index_of
         storef col.len
         addsp -3
 
-        loadf col.addr
-        loadf row.addr
-        store
+        loadf col.len
+        push NOT_FOUND
+        bne _comma_found
 
+        _comma_not_found:
+        loadf i
+        loadf src.len
+        sub ; TOP = src.len - i
+        storef col.len
+
+        _comma_found:
         loadf col.len
         loadf row.addr
         addi 1
@@ -167,13 +177,12 @@ load_row:
 
         loadf col.addr
         loadf col.len
-        add
+        add 1 ; +1 for the comma
         storef col.addr
 
         loadf i
         loadf col.len
-        add
-        addi 1 ; for the comma
+        add 1 ; +1 for the comma
         storef i
 
         loadf i
