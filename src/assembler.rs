@@ -44,6 +44,7 @@ pub enum ParserError {
     InvalidIntLiteral(ParseIntError),
     UnknownMacro(String),
     SyntaxError(String),
+    StructureError(String),
     MultipleErrors(Vec<ParserError>),
 
     _NotAnInteger,
@@ -80,11 +81,20 @@ pub fn assemble_from_source<T: io::Read>(mut source: T) -> Result<AssemblyResult
 }
 
 
+#[derive(Clone)]
+struct ForLoop {
+    counter_var: String,
+    limit_var: String,
+    label_name: String,
+}
+
 struct Assembler {
     errors: Vec<(usize, ParserError)>,
     linker: Linker,
 
-    extra_frame_setup: Vec<String>,
+    frame_extra_setup: Vec<String>,
+    frame_nloops: usize,
+    frame_cur_loop: Option<ForLoop>,
 }
 
 impl Assembler {
@@ -92,7 +102,9 @@ impl Assembler {
         Assembler {
             linker: Linker::new(),
             errors: Vec::new(),
-            extra_frame_setup: Vec::new(),
+            frame_extra_setup: Vec::new(),
+            frame_nloops: 0,
+            frame_cur_loop: None,
         }
     }
 
@@ -121,6 +133,13 @@ impl Assembler {
                 _ => {}
             }
         }
+    }
+
+    fn process_internal(&mut self, text: &str) -> Result<(), ParserError> {
+        for line in text.lines() {
+            self.process_line(line)?;
+        }
+        Ok(())
     }
 
     pub fn finish(mut self) -> Result<AssemblyResult, AssemblyError> {
@@ -203,15 +222,19 @@ impl Assembler {
                 }
             }
             ".start_frame" => {
-                self.process_line("loadi fp")?;
-                self.process_line("loadi sp")?;
-                self.process_line("storei fp")?;
+                self.process_internal("
+                    loadi fp
+                    loadi sp
+                    storei fp
+                ")?;
 
                 self.linker.add_inst("addsp", self.linker.cur_frame().locals_size);
 
-                let extra_lines = self.extra_frame_setup.drain(..).collect::<Vec<_>>();
-                for line in extra_lines.iter() {
-                    self.process_line(line)?;
+                let extra_blocks = self.frame_extra_setup
+                    .drain(..)
+                    .collect::<Vec<_>>();
+                for block in extra_blocks {
+                    self.process_internal(&block)?;
                 }
             }
             ".end_frame" => {
@@ -221,16 +244,52 @@ impl Assembler {
             }
             ".addr_of" => {
                 if args.len() != 1 {
-                    return Err(SyntaxError(format!("{} takes only one arg: {:?}", macro_name, args)));
+                    return Err(SyntaxError(format!("{} takes 1 arg: {:?}", macro_name, args)));
                 }
                 let var_name = Assembler::expect_ident(args[0])?;
                 let addr_name = format!("{}.addr", var_name);
                 self.linker.add_local_var(&addr_name, 1);
-                self.extra_frame_setup.extend_from_slice(&[
-                    format!("loadi fp"),
-                    format!("addi {}", var_name),
-                    format!("storef {}", addr_name),
-                ])
+                self.frame_extra_setup.push(format!("
+                    loadi fp
+                    addi {var_name}
+                    storef {addr_name}
+                ", var_name = var_name, addr_name = addr_name))
+            }
+            ".simple_for_loop" => {
+                if args.len() != 3 {
+                    return Err(SyntaxError(format!("{} takes 3 args: {:?}", macro_name, args)));
+                }
+                let counter_var = Assembler::expect_ident(args[0])?.to_string();
+                let init_val = Assembler::expect_int_literal(args[1])?.to_string();
+                let limit_var = Assembler::expect_ident(args[2])?.to_string();
+                let label_name = format!("_loop.{}", self.frame_nloops);
+                self.frame_nloops += 1;
+                self.process_internal(&format!("
+                    push {init_val}
+                    storef {counter_var}
+                    {label_name}:
+                ", counter_var = counter_var, init_val = init_val, label_name = label_name))?;
+                self.frame_cur_loop = Some(ForLoop {
+                    counter_var,
+                    limit_var,
+                    label_name,
+                });
+            }
+            ".end_for" => {
+                match self.frame_cur_loop.clone() {
+                    None =>
+                        return Err(StructureError("no current for loop to end".to_string())),
+                    Some(ForLoop { label_name, counter_var, limit_var }) =>
+                        self.process_internal(&format!("
+                            loadf {counter_var}
+                            addi 1
+                            storef {counter_var}
+                            loadf {counter_var}
+                            loadf {limit_var}
+                            blt {label_name}
+                        ", counter_var = counter_var, limit_var = limit_var, label_name = label_name))?
+                }
+                self.frame_cur_loop = None;
             }
             unknown => return Err(UnknownMacro(unknown.to_string())),
         }
@@ -319,7 +378,7 @@ impl Assembler {
         }
         let mut chars = arg.chars();
         let first_char = chars.next().unwrap();
-        if !first_char.is_alphabetic() && first_char != '_'  {
+        if !first_char.is_alphabetic() && first_char != '_' {
             return Err(SyntaxError(format!("identifier must start with letter or '_': {}", arg)));
         }
         for ch in chars {

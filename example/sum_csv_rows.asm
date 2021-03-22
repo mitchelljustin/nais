@@ -280,9 +280,7 @@ dec_to_int:
     push 0
     storef retval
 
-    push 0
-    storef i
-    _loop:
+    .simple_for_loop i 0 decimal.len
         loadf retval
         muli 10
         storef retval
@@ -299,14 +297,7 @@ dec_to_int:
         loadf retval
         add
         storef retval
-
-        loadf i
-        addi 1
-        storef i
-
-        loadf i
-        loadf decimal.len
-        blt _loop
+    .end_for
 
     .end_frame
     ret
