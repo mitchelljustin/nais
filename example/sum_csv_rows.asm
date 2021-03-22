@@ -28,11 +28,7 @@ sum_rows:
 
     jump _preset_path
     _user_path:
-        push .sizeof.path
-        loadf path.addr
-        push
-        jal read_path_from_stdin
-        storef path.len
+        .call read_path_from_stdin lf:path.addr p:.sizeof.path ret:path.len
         loadf path.len
         storef retval
         loadf retval
@@ -54,41 +50,25 @@ sum_rows:
         jal memcpy
         addsp -4
     _path_done:
-    loadf path.len
-    loadf path.addr
-    ecall .cc.open
-    storef fd
+    .call env.open lf:path.addr lf:path.len ret:fd
+
     loadf fd
     storef retval
     loadf retval
     push 0
     blt _end
 
-    push .sizeof.buf
-    loadf buf.addr
-    loadf fd
-    ecall .cc.read
-    storef buf.len
+    .call env.read lf:fd lf:buf.addr p:.sizeof.buf ret:buf.len
+
     loadf buf.len
     storef retval
     loadf retval
     push 0
     blt _end
 
-    push .sizeof.buf
-    loadf buf.addr
-    push NEWLINE
-    push
-    jal index_of
-    storef line_len
-    addsp -3
+    .call index_of p:NEWLINE lf:buf.addr p:.sizeof.buf ret:line_len
 
-    loadf line_len
-    loadf buf.addr
-    push
-    jal num_columns
-    storef ncols
-    addsp -2
+    .call num_columns lf:buf.addr lf:line_len ret:ncols
 
     loadf ncols
     muli 2
@@ -96,33 +76,17 @@ sum_rows:
     ecall .cc.malloc
     storef columns.addr
 
-    loadf columns.addr
-    loadf line_len
-    loadf buf.addr
-    push
-    jal read_row
-    addsp -4
+    .call read_row lf:buf.addr lf:line_len lf:columns.addr
 
-    loadf ncols
-    ecall .cc.malloc
-    storef sums.addr
+    .call env.malloc lf:ncols ret:sums.addr
 
-    push 0
-    storef i
-    _init_sums_loop:
+    .for i 0 to ncols ; init sums loop
         push 0
         loadf sums.addr
         loadf i
         add
         store
-
-        loadf i
-        addi 1
-        storef i
-
-        loadf i
-        loadf ncols
-        blt _init_sums_loop
+    .end_for
     loadf buf.addr
     storef buf.ptr
     _sum_loop:
@@ -136,28 +100,15 @@ sum_rows:
         sub 1
         storef buf.len
 
-        loadf buf.len
-        loadf buf.ptr
-        push NEWLINE
-        push
-        jal index_of
-        storef line_len
-        addsp -3
+        .call index_of p:NEWLINE lf:buf.ptr lf:buf.len ret:line_len
 
         loadf line_len
         push NOT_FOUND
         beq _sum_done
 
-        loadf row.addr
-        loadf line_len
-        loadf buf.ptr
-        push
-        jal read_row
-        addsp -4
+        .call read_row lf:buf.ptr lf:line_len lf:row.addr
 
-        push 0
-        storef i
-        _col_loop:
+        .for i 0 to ncols ; row sum loop
             ; x = dec_to_int(row[i*2], row[i*2+1])
             loadf row.addr
             loadf i
@@ -185,19 +136,10 @@ sum_rows:
             loadf i
             add
             store
-
-            loadf i
-            addi 1
-            storef i
-
-            loadf i
-            loadf ncols
-            blt _col_loop
+        .end_for
         jump _sum_loop
     _sum_done:
-    push 0
-    storef i
-    _print_loop:
+    .for i 0 to ncols ; print loop
         loadf columns.addr
         loadf i
         muli 2
@@ -250,19 +192,8 @@ sum_rows:
         addi 1
         storef path.len
 
-        loadf path.len
-        loadf path.addr
-        push .fd.stdout
-        ecall .cc.write
-        addsp -1
-
-        loadf i
-        addi 1
-        storef i
-
-        loadf i
-        loadf ncols
-        blt _print_loop
+        .call env.write p:.fd.stdout lf:path.addr lf:path.len
+    .end_for
     _ok:
     push 0
     storef retval
@@ -280,7 +211,7 @@ dec_to_int:
     push 0
     storef retval
 
-    .simple_for_loop i 0 decimal.len
+    .for i 0 to decimal.len
         loadf retval
         muli 10
         storef retval
@@ -458,9 +389,7 @@ num_columns:
     push 1
     storef n
 
-    push 0
-    storef i
-    _loop:
+    .for i 0 to str.len
         loadf str.addr
         loadf i
         add
@@ -473,13 +402,8 @@ num_columns:
         storef n
 
         _next:
-        loadf i
-        addi 1
-        storef i
+    .end_for
 
-        loadf i
-        loadf str.len
-        blt _loop
     loadf n
     storef retval
     jump _end
@@ -536,11 +460,7 @@ read_path_from_stdin:
     push 0
     blt _end
 
-    loadf path.len
-    loadf path.addr
-    push .fd.stdin
-    ecall .cc.read
-    storef retval
+    .call env.read p:.fd.stdin lf:path.addr lf:path.len ret:retval
 
     _end:
     .end_frame

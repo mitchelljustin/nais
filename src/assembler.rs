@@ -1,5 +1,5 @@
 use std::{cmp, fmt, fs};
-use std::fmt::Formatter;
+use std::fmt::{Formatter, Write};
 use std::io;
 use std::num::ParseIntError;
 
@@ -92,6 +92,8 @@ struct Assembler {
     errors: Vec<(usize, ParserError)>,
     linker: Linker,
 
+    processed: String,
+
     frame_extra_setup: Vec<String>,
     frame_nloops: usize,
     frame_cur_loop: Option<ForLoop>,
@@ -102,6 +104,9 @@ impl Assembler {
         Assembler {
             linker: Linker::new(),
             errors: Vec::new(),
+
+            processed: String::new(),
+
             frame_extra_setup: Vec::new(),
             frame_nloops: 0,
             frame_cur_loop: None,
@@ -136,9 +141,11 @@ impl Assembler {
     }
 
     fn process_internal(&mut self, text: &str) -> Result<(), ParserError> {
+        self.process_line("; +{")?;
         for line in text.lines() {
             self.process_line(line)?;
         }
+        self.process_line("; }")?;
         Ok(())
     }
 
@@ -152,6 +159,7 @@ impl Assembler {
             Err(errs) => return Err(LinkerErrors(errs)),
         };
         let debug_info = DebugInfo::from(self.linker);
+        eprintln!("{}", self.processed);
         Ok(AssemblyResult {
             binary,
             debug_info,
@@ -159,6 +167,7 @@ impl Assembler {
     }
 
     fn process_line(&mut self, line: &str) -> Result<(), ParserError> {
+        write!(self.processed, "{}\n", line).unwrap();
         let line = line.to_string();
         let line = line.split(";").next().unwrap(); // Remove comments
         let words: Vec<&str> = line.split_ascii_whitespace().collect();
@@ -241,6 +250,8 @@ impl Assembler {
                 self.linker.add_inst("addsp", -self.linker.cur_frame().locals_size);
 
                 self.process_instruction("storei", &["fp"])?;
+
+                self.frame_nloops = 0;
             }
             ".addr_of" => {
                 if args.len() != 1 {
@@ -255,13 +266,13 @@ impl Assembler {
                     storef {addr_name}
                 ", var_name = var_name, addr_name = addr_name))
             }
-            ".simple_for_loop" => {
-                if args.len() != 3 {
-                    return Err(SyntaxError(format!("{} takes 3 args: {:?}", macro_name, args)));
+            ".for" => {
+                if args.len() != 4 || args[2] != "to" {
+                    return Err(SyntaxError(format!("{} format: `var` `init` to `limit`", macro_name)));
                 }
                 let counter_var = Assembler::expect_ident(args[0])?.to_string();
                 let init_val = Assembler::expect_int_literal(args[1])?.to_string();
-                let limit_var = Assembler::expect_ident(args[2])?.to_string();
+                let limit_var = Assembler::expect_ident(args[3])?.to_string();
                 let label_name = format!("_loop.{}", self.frame_nloops);
                 self.frame_nloops += 1;
                 self.process_internal(&format!("
@@ -290,6 +301,60 @@ impl Assembler {
                         ", counter_var = counter_var, limit_var = limit_var, label_name = label_name))?
                 }
                 self.frame_cur_loop = None;
+            }
+            ".call" => {
+                if args.len() == 0 {
+                    return Err(SyntaxError(format!("{} takes at least 1 arg", macro_name)));
+                }
+                let mut gen_code = String::new();
+                let call_target = args[0];
+                let mut call_args = args[1..].to_vec();
+                let nargs = call_args.len();
+                call_args.reverse();
+                let mut ret_target = None;
+                for arg in call_args.into_iter() {
+                    if let &[ty, val] = &arg.split(":").collect::<Vec<_>>()[..] {
+                        let op_name = match ty {
+                            "lf" => "loadf",
+                            "p" => "push",
+                            "ret" => {
+                                ret_target = Some(val);
+                                continue;
+                            }
+                            _ => return Err(SyntaxError(format!("T can only be f or p: {}", ty)))
+                        };
+                        write!(gen_code, "{} {}\n", op_name, val).unwrap();
+                    } else {
+                        return Err(SyntaxError(format!("expected T:VAL format: {}", arg)));
+                    }
+                }
+                if call_target.starts_with("env.") {
+                    let env_call_name = &call_target[4..];
+                    let epilogue = match ret_target {
+                        None => "addsp -1".to_string(),
+                        Some(target) => format!("storef {}", target),
+                    };
+                    write!(gen_code, "
+                        ecall .cc.{}
+                        {}
+                    ", env_call_name, epilogue).unwrap();
+                } else {
+                    let epilogue = match ret_target {
+                        None => format!("
+                            addsp -{}
+                        ", nargs + 1),
+                        Some(target) => format!("
+                            storef {}
+                            addsp -{}
+                        ", target, nargs - 1)
+                    };
+                    write!(gen_code, "
+                        push
+                        jal {call_target}
+                        {epilogue}
+                    ", call_target = call_target, epilogue = epilogue).unwrap();
+                }
+                self.process_internal(&gen_code)?;
             }
             unknown => return Err(UnknownMacro(unknown.to_string())),
         }
