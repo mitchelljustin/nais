@@ -255,7 +255,7 @@ impl Machine {
                 }
             }
             out.write_str("    ").unwrap();
-            match self.load_inst(addr) {
+            match self.fetch_inst(addr) {
                 Ok(inst) => out.write_str(&inst.to_string()).unwrap(),
                 Err(MachineError::CannotDecodeInst(bin_inst)) => {
                     writeln!(out, "{:x} [0x{:08x}]", addr, bin_inst).unwrap();
@@ -422,10 +422,9 @@ impl Machine {
     }
 
     pub fn cycle(&mut self) {
-        let pc = self.getpc();
-        let inst = match self.load_inst(pc) {
+        let inst = match self.fetch_inst(self.getpc()) {
             Err(e) => {
-                self.set_status(Error(e));
+                self.set_error(e);
                 return;
             }
             Ok(inst) => inst
@@ -437,11 +436,11 @@ impl Machine {
             self.debug_cycle();
         }
         if self.ncycles == self.max_cycles {
-            self.set_status(Error(MaxCyclesReached));
+            self.set_error(MaxCyclesReached);
         }
     }
 
-    fn load_inst(&self, addr: i32) -> Result<Inst, MachineError> {
+    fn fetch_inst(&self, addr: i32) -> Result<Inst, MachineError> {
         if !self.code_access_ok(addr) {
             return Err(CodeAccessSegFault { addr });
         }

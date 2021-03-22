@@ -48,18 +48,18 @@ pub enum LabelType {
 #[derive(Clone)]
 pub struct ResolvedTarget {
     pub inst_addr: i32,
-    pub idents: Vec<String>,
     pub value: i32,
+    pub idents: Vec<String>,
     pub label_type: LabelType,
 }
 
 impl Display for LabelType {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            LabelType::Global           => "glob",
-            LabelType::TopLevelLabel    => "label",
-            LabelType::InnerLabel       => "inner",
-            LabelType::FrameVar         => "var",
+            LabelType::Global => "glob",
+            LabelType::TopLevelLabel => "label",
+            LabelType::InnerLabel => "inner",
+            LabelType::FrameVar => "var",
             _ => "",
         })
     }
@@ -132,10 +132,10 @@ impl Linker {
         }
     }
 
-    pub fn add_inst(&mut self, opname: &str, arg: i32) {
+    pub fn add_inst(&mut self, op_name: &str, arg: i32) {
         let addr = self.next_inst_addr();
         self.frame_for_inst_addr.insert(addr, self.cur_frame_name.clone());
-        match self.encoder.make_inst(opname, arg) {
+        match self.encoder.make_inst(op_name, arg) {
             Some(inst) => {
                 self.instructions.push(Inst {
                     addr: Some(addr),
@@ -144,7 +144,7 @@ impl Linker {
             }
             None => {
                 self.errors.push(LinkerError::NoSuchOp(
-                    addr, opname.to_string()));
+                    addr, op_name.to_string()));
                 self.instructions.push(Inst {
                     opcode: 0x00,
                     op: OP_INVALID,
@@ -243,10 +243,10 @@ impl Linker {
     pub fn add_raw_word(&mut self, value: i32) {
         let addr = self.next_inst_addr();
         let inst = Inst {
-            addr:   Some(addr),
-            op:     OP_INVALID,
+            addr: Some(addr),
+            op: OP_INVALID,
             opcode: ((value as u32 & 0xff000000) >> 24) as u8,
-            arg:    (value & 0x00ffffff) as i32,
+            arg: (value & 0x00ffffff) as i32,
         };
         self.instructions.push(inst);
     }
@@ -336,26 +336,24 @@ impl Linker {
             .collect();
         Ok(ResolvedTarget {
             inst_addr,
-            label_type,
-            idents,
             value,
+            idents,
+            label_type,
         })
     }
 
     pub fn relocate(&mut self) -> Result<(), Vec<(usize, Vec<String>)>> {
         let mut unrelocated = Vec::<(usize, Vec<String>)>::new();
         let mut inst_updates = Vec::<(usize, i32)>::new();
-        for (inst_loc, target) in self.to_relocate.iter() {
-            let inst_loc = *inst_loc;
+        for (&inst_loc, target) in self.to_relocate.iter() {
             let inst_addr = inst_loc_to_addr(inst_loc);
             match self.resolve(inst_loc, target) {
                 Ok(resolved) => {
                     inst_updates.push((inst_loc, resolved.value));
                     self.resolved_targets.insert(inst_addr, resolved);
                 }
-                Err(unresolved) => {
-                    unrelocated.push((inst_loc, unresolved));
-                }
+                Err(unresolved) =>
+                    unrelocated.push((inst_loc, unresolved)),
             }
         }
         for (loc, arg) in inst_updates.into_iter() {

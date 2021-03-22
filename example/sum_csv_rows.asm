@@ -8,15 +8,15 @@ main:
 
 sum_rows:
     .local path 64
-    .local path.addr 1
+    .addr_of path
     .local path.len 1
     .local fd 1
     .local buf 64
+    .addr_of buf
     .local buf.len 1
-    .local buf.addr 1
     .local buf.ptr 1
     .local row 64
-    .local row.addr 1
+    .addr_of row
     .local col.addr 1
     .local columns.addr 1
     .local ncols 1
@@ -25,18 +25,6 @@ sum_rows:
     .local i 1
     .local x 1
     .start_frame
-
-    loadi fp
-    addi path
-    storef path.addr
-
-    loadi fp
-    addi buf
-    storef buf.addr
-
-    loadi fp
-    addi row
-    storef row.addr
 
     jump _preset_path
     _user_path:

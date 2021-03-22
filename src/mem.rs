@@ -1,5 +1,3 @@
-use std::iter;
-use std::iter::FromIterator;
 use std::ops::{Index, IndexMut};
 
 pub mod segs {
@@ -77,7 +75,7 @@ pub struct Memory {
 impl Memory {
     pub fn new() -> Memory {
         let mut mem = Memory {
-            vec: Vec::from_iter(iter::repeat(0).take(segs::ADDR_SPACE.len())),
+            vec: vec![0i32; segs::ADDR_SPACE.len()],
         };
         // Initialize stack
         mem[addrs::PC]          = addrs::INIT_PC;

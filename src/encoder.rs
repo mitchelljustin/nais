@@ -25,11 +25,11 @@ impl Encoder {
         enc
     }
 
-    pub fn make_inst(&self, opname: &str, arg: i32) -> Option<Inst> {
-        match self.name_to_op.get(opname) {
+    pub fn make_inst(&self, op_name: &str, arg: i32) -> Option<Inst> {
+        match self.name_to_op.get(op_name) {
             None => return None,
             Some(&op) => {
-                let opcode = *self.op_to_opcode.get(opname).unwrap();
+                let opcode = *self.op_to_opcode.get(op_name).unwrap();
                 Some(Inst {
                     addr: None,
                     op,
@@ -54,10 +54,7 @@ impl Encoder {
             // sign extend
             arg |= 0xff000000u32 as i32;
         }
-        let op = match self.opcode_to_op.get(&opcode) {
-            None => return None,
-            Some(&op) => op
-        };
+        let op = *self.opcode_to_op.get(&opcode)?;
         Some(Inst {
             addr: None,
             opcode,

@@ -2,7 +2,6 @@ use std::{cmp, fmt, fs};
 use std::fmt::Formatter;
 use std::io;
 use std::num::ParseIntError;
-use std::ops::RangeInclusive;
 
 use AssemblyError::*;
 use ParserError::*;
@@ -42,14 +41,12 @@ impl fmt::Display for AssemblyError {
 
 #[derive(Debug)]
 pub enum ParserError {
-    WrongNumberOfArguments { verb: String, expected: RangeInclusive<usize>, actual: usize },
-    InvalidLiteral(ParseIntError),
-    SyntaxError { reason: String },
-
+    InvalidIntLiteral(ParseIntError),
+    UnknownMacro(String),
+    SyntaxError(String),
     MultipleErrors(Vec<ParserError>),
 
-    UnknownError,
-    _ArgIsIdent,
+    _NotAnInteger,
 }
 
 pub struct AssemblyResult {
@@ -86,6 +83,8 @@ pub fn assemble_from_source<T: io::Read>(mut source: T) -> Result<AssemblyResult
 struct Assembler {
     errors: Vec<(usize, ParserError)>,
     linker: Linker,
+
+    extra_frame_setup: Vec<String>,
 }
 
 impl Assembler {
@@ -93,6 +92,7 @@ impl Assembler {
         Assembler {
             linker: Linker::new(),
             errors: Vec::new(),
+            extra_frame_setup: Vec::new(),
         }
     }
 
@@ -147,113 +147,141 @@ impl Assembler {
             return Ok(());
         }
         let verb = words[0];
-        if verb.ends_with(":") {
-            self.process_label(verb);
-            return Ok(());
-        }
         let args = &words[1..];
         self.process_statement(verb, args)
     }
 
-    fn process_label(&mut self, name: &str) {
+    fn process_statement(&mut self, verb: &str, args: &[&str]) -> Result<(), ParserError> {
+        match verb {
+            label_name if label_name.ends_with(":") =>
+                self.process_label(label_name)?,
+            macro_name if macro_name.starts_with(".") =>
+                self.process_macro(macro_name, args)?,
+            op_name =>
+                self.process_instruction(op_name, args)?,
+        }
+        Ok(())
+    }
+
+    fn process_label(&mut self, name: &str) -> Result<(), ParserError> {
         let name = &name[..name.len() - 1];
         if name.starts_with("_") {
             self.linker.add_inner_label(name);
         } else {
             self.linker.add_top_level_label(name);
         }
+        Ok(())
     }
 
-    fn process_statement(&mut self, verb: &str, args: &[&str]) -> Result<(), ParserError> {
-        match verb {
+    fn process_macro(&mut self, macro_name: &str, args: &[&str]) -> Result<(), ParserError> {
+        match macro_name {
             ".define" => {
-                let (name, value) = Assembler::expect_name_and_literal(verb, args)?;
+                let (name, value) = Assembler::expect_ident_and_int(macro_name, args)?;
                 self.linker.add_global_constant(name, value);
             }
-            ".word" => {
-                if args.is_empty() {
-                    return Err(SyntaxError { reason: ".word needs arguments".to_string() });
-                }
-                let mut bytes: Vec<u8> = vec![];
-                for arg in args {
-                    if let Some(val) = Assembler::parse_hex_word(arg) {
-                        self.linker.add_raw_word(val);
-                    } else if let Ok(val) = Assembler::parse_integer(arg) {
-                        bytes.push(val as u8);
-                    } else if let Ok(st) = Assembler::expect_string(arg) {
-                        bytes.extend(st.bytes());
-                    } else {
-                        return Err(SyntaxError {
-                            reason: ".word expects literals or quoted strings".to_string(),
-                        });
-                    }
-                }
-                let nbytes = bytes.len();
-                if nbytes == 0 {
-                    return Ok(());
-                }
-                let num_words = cmp::max(1, nbytes / 4);
-                for i in 0..num_words {
-                    let end = cmp::min(nbytes, (i + 1) * 4);
-                    let word_bytes = &bytes[i * 4..end];
-                    let mut word = 0i32;
-                    for (i, b) in word_bytes.iter().enumerate() {
-                        word |= (*b as i32) << (24 - i * 8);
-                    }
-                    self.linker.add_raw_word(word);
-                }
+            ".param" => {
+                let (name, size) = Assembler::expect_ident_and_int(macro_name, args)?;
+                self.linker.add_param(name, size);
+                self.linker.add_local_constant(&Assembler::sizeof_name(name), size);
             }
+            ".local" => {
+                let (name, size) = Assembler::expect_ident_and_int(macro_name, args)?;
+                self.linker.add_local_var(name, size);
+                self.linker.add_local_constant(&Assembler::sizeof_name(name), size);
+            }
+            ".word" => return self.process_word_macro(args),
             ".string" => {
                 for arg in args {
-                    if let Ok(val) = Assembler::parse_integer(arg) {
+                    if let Ok(val) = Assembler::expect_int_literal(arg) {
                         self.linker.add_raw_word(val);
                         continue;
                     }
-                    let st = Assembler::expect_string(arg)?;
+                    let st = Assembler::expect_string_literal(arg)?;
                     for ch in st.chars() {
                         self.linker.add_raw_word(ch as i32);
                     }
                 }
             }
-            ".param" => {
-                let (name, size) = Assembler::expect_name_and_literal(verb, args)?;
-                self.linker.add_param(name, size);
-                self.linker.add_local_constant(&Assembler::var_size_name(name), size);
-            }
-            ".local" => {
-                let (name, size) = Assembler::expect_name_and_literal(verb, args)?;
-                self.linker.add_local_var(name, size);
-                self.linker.add_local_constant(&Assembler::var_size_name(name), size);
-            }
             ".start_frame" => {
-                self.process_inst("loadi", &["fp"])?;
-                self.process_inst("loadi", &["sp"])?;
-                self.process_inst("storei", &["fp"])?;
+                self.process_line("loadi fp")?;
+                self.process_line("loadi sp")?;
+                self.process_line("storei fp")?;
 
                 self.linker.add_inst("addsp", self.linker.cur_frame().locals_size);
+
+                let extra_lines = self.extra_frame_setup.drain(..).collect::<Vec<_>>();
+                for line in extra_lines.iter() {
+                    self.process_line(line)?;
+                }
             }
             ".end_frame" => {
                 self.linker.add_inst("addsp", -self.linker.cur_frame().locals_size);
 
-                self.process_inst("storei", &["fp"])?;
+                self.process_instruction("storei", &["fp"])?;
             }
-            opname => self.process_inst(opname, args)?,
+            ".addr_of" => {
+                if args.len() != 1 {
+                    return Err(SyntaxError(format!("{} takes only one arg: {:?}", macro_name, args)));
+                }
+                let var_name = Assembler::expect_ident(args[0])?;
+                let addr_name = format!("{}.addr", var_name);
+                self.linker.add_local_var(&addr_name, 1);
+                self.extra_frame_setup.extend_from_slice(&[
+                    format!("loadi fp"),
+                    format!("addi {}", var_name),
+                    format!("storef {}", addr_name),
+                ])
+            }
+            unknown => return Err(UnknownMacro(unknown.to_string())),
         }
         Ok(())
     }
 
-    fn process_inst(&mut self, opname: &str, args: &[&str]) -> Result<(), ParserError> {
+    fn process_word_macro(&mut self, args: &[&str]) -> Result<(), ParserError> {
         if args.is_empty() {
-            self.linker.add_inst(opname, 0);
+            return Err(SyntaxError(".word needs arguments".to_string()));
+        }
+        let mut bytes: Vec<u8> = vec![];
+        for arg in args {
+            if let Some(val) = Assembler::parse_hex_i32(arg) {
+                self.linker.add_raw_word(val);
+            } else if let Ok(val) = Assembler::expect_int_literal(arg) {
+                bytes.push(val as u8);
+            } else if let Ok(string) = Assembler::expect_string_literal(arg) {
+                bytes.extend(string.bytes());
+            } else {
+                return Err(SyntaxError(".word expects int or string literals".to_string()));
+            }
+        }
+        let nbytes = bytes.len();
+        if nbytes == 0 {
+            return Ok(());
+        }
+        let num_words = cmp::max(1, nbytes / 4);
+        for i in 0..num_words {
+            let end = cmp::min(nbytes, (i + 1) * 4);
+            let word_bytes = &bytes[i * 4..end];
+            let mut word = 0i32;
+            for (i, b) in word_bytes.iter().enumerate() {
+                word |= (*b as i32) << (24 - i * 8);
+            }
+            self.linker.add_raw_word(word);
+        }
+        Ok(())
+    }
+
+    fn process_instruction(&mut self, op_name: &str, args: &[&str]) -> Result<(), ParserError> {
+        if args.is_empty() {
+            self.linker.add_inst(op_name, 0);
             return Ok(());
         }
         let (terms, errs): (Vec<_>, Vec<_>) = args
             .iter()
             .map(|arg| arg.strip_prefix(",").unwrap_or(arg))
             .map(|arg| arg.strip_suffix(",").unwrap_or(arg))
-            .map(|arg| match Assembler::parse_integer(arg) {
+            .map(|arg| match Assembler::expect_int_literal(arg) {
                 Ok(literal) => Ok(TargetTerm::Literal(literal)),
-                Err(_ArgIsIdent) => Ok(TargetTerm::Ident(arg.to_string())),
+                Err(_NotAnInteger) => Ok(TargetTerm::Ident(arg.to_string())),
                 Err(err) => Err(err),
             })
             .partition(|r| r.is_ok());
@@ -267,19 +295,11 @@ impl Assembler {
             .into_iter()
             .map(|r| r.unwrap())
             .collect();
-        self.linker.add_placeholder_inst(opname, target);
+        self.linker.add_placeholder_inst(op_name, target);
         Ok(())
     }
 
-    fn expect_string(arg: &str) -> Result<&str, ParserError> {
-        if arg.len() < 2 || &arg[0..1] != "\"" || &arg[arg.len() - 1..] != "\"" {
-            return Err(SyntaxError { reason: format!("bad .string formatting: {}", arg) });
-        }
-        let st = &arg[1..arg.len() - 1];
-        Ok(st)
-    }
-
-    fn parse_hex_word(arg: &str) -> Option<i32> {
+    fn parse_hex_i32(arg: &str) -> Option<i32> {
         if !arg.starts_with("0x") {
             return None;
         }
@@ -293,11 +313,36 @@ impl Assembler {
         }
     }
 
-    fn parse_integer(arg: &str) -> Result<i32, ParserError> {
+    fn expect_ident(arg: &str) -> Result<&str, ParserError> {
+        if arg.len() == 0 {
+            return Err(SyntaxError("where's the ident?".to_string()));
+        }
+        let mut chars = arg.chars();
+        let first_char = chars.next().unwrap();
+        if !first_char.is_alphabetic() && first_char != '_'  {
+            return Err(SyntaxError(format!("identifier must start with letter or '_': {}", arg)));
+        }
+        for ch in chars {
+            if !ch.is_alphanumeric() && ch != '_' && ch != '.' {
+                return Err(SyntaxError(format!("identifier must only contain alphanum, '_' or '.': {}", arg)));
+            }
+        }
+        Ok(arg)
+    }
+
+    fn expect_string_literal(arg: &str) -> Result<&str, ParserError> {
+        if arg.len() < 2 || &arg[0..1] != "\"" || &arg[arg.len() - 1..] != "\"" {
+            return Err(SyntaxError(format!("invalid string literal: {}", arg)));
+        }
+        let string = &arg[1..arg.len() - 1];
+        Ok(string)
+    }
+
+    fn expect_int_literal(arg: &str) -> Result<i32, ParserError> {
         if arg.starts_with("0x") {
-            return match u32::from_str_radix(&arg[2..], 16) {
-                Ok(arg) => Ok(arg as i32),
-                Err(err) => Err(InvalidLiteral(err)),
+            return match i32::from_str_radix(&arg[2..], 16) {
+                Ok(arg) => Ok(arg),
+                Err(err) => Err(InvalidIntLiteral(err)),
             };
         }
         if let Ok(arg) = i32::from_str_radix(arg, 10) {
@@ -308,30 +353,20 @@ impl Assembler {
             chars.next();
             return Ok(chars.next().unwrap() as i32);
         }
-        Err(_ArgIsIdent)
+        Err(_NotAnInteger)
     }
 
-    fn expect_num_args<'a>(verb: &'a str, args: &'a [&'a str], expected: RangeInclusive<usize>)
-                           -> Result<&'a [&'a str], ParserError> {
-        if !expected.contains(&args.len()) {
-            return Err(WrongNumberOfArguments {
-                expected,
-                actual: args.len(),
-                verb: verb.to_string(),
-            });
+    fn expect_ident_and_int<'a>(verb: &'a str, args: &'a [&'a str]) -> Result<(&'a str, i32), ParserError> {
+        if let &[ident, int] = args {
+            let ident = Assembler::expect_ident(ident)?;
+            let int = Assembler::expect_int_literal(int)?;
+            Ok((ident, int))
+        } else {
+            Err(SyntaxError(format!("{} expects ident + integer literal: {:?}", verb, args)))
         }
-        Ok(args)
     }
 
-    fn expect_name_and_literal<'a>(verb: &'a str, args: &'a [&'a str]) -> Result<(&'a str, i32), ParserError> {
-        if let &[name, literal] = Assembler::expect_num_args(verb, args, 2..=2)? {
-            let literal = Assembler::parse_integer(literal)?;
-            return Ok((name, literal));
-        }
-        Err(UnknownError)
-    }
-
-    fn var_size_name(var_name: &str) -> String {
+    fn sizeof_name(var_name: &str) -> String {
         format!(".sizeof.{}", var_name)
     }
 }

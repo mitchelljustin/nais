@@ -2,7 +2,7 @@ use std::fmt::{Debug, Display, Formatter};
 use std::fmt;
 
 use crate::environment;
-use crate::machine::{MachineError, MachineStatus};
+use crate::machine::MachineError;
 use crate::mem::addrs;
 
 use super::Machine;
@@ -111,7 +111,7 @@ pub fn ret(m: &mut Machine, _: i32) {
 }
 
 pub fn invald(m: &mut Machine, _: i32) {
-    m.set_status(MachineStatus::Error(MachineError::InvalidInstruction));
+    m.set_error(MachineError::InvalidInstruction);
 }
 
 macro_rules! with_overflow {
