@@ -45,7 +45,7 @@ pub enum MachineStatus {
 pub struct Machine {
     mem: Memory,
 
-    status: MachineStatus,
+    pub(crate) status: MachineStatus,
     ncycles: usize,
     encoder: Encoder,
 

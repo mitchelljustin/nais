@@ -21,17 +21,13 @@ impl fmt::Display for AssemblyError {
             IOError(e) => e.fmt(f),
             LinkerErrors(errors) => {
                 for (index, err) in errors.iter().enumerate() {
-                    if let Err(e) = writeln!(f, "{}. {}", index + 1, err) {
-                        return Err(e);
-                    }
+                    writeln!(f, "{}. {}", index + 1, err)?;
                 }
                 Ok(())
             }
             ASMParserErrors(errors) => {
                 for (loc, err) in errors.iter() {
-                    if let Err(e) = writeln!(f, "Line {}: {}", loc + 1, err) {
-                        return Err(e);
-                    }
+                    writeln!(f, "Line {}: {}", loc + 1, err)?;
                 }
                 Ok(())
             }
@@ -53,6 +49,7 @@ pub enum ParserError {
 pub struct AssemblyResult {
     pub binary: Vec<i32>,
     pub debug_info: DebugInfo,
+    pub expanded_source: String,
 }
 
 impl fmt::Display for ParserError {
@@ -92,22 +89,25 @@ struct Assembler {
     errors: Vec<(usize, ParserError)>,
     linker: Linker,
 
-    processed: String,
+    line_no: usize,
+    expanded_source: String,
 
-    frame_extra_setup: Vec<String>,
+    frame_extra_setup: String,
     frame_nloops: usize,
     frame_cur_loop: Option<ForLoop>,
 }
 
 impl Assembler {
+
     pub fn new() -> Assembler {
         Assembler {
             linker: Linker::new(),
             errors: Vec::new(),
+            line_no: 0,
 
-            processed: String::new(),
+            expanded_source: String::new(),
 
-            frame_extra_setup: Vec::new(),
+            frame_extra_setup: String::new(),
             frame_nloops: 0,
             frame_cur_loop: None,
         }
@@ -132,20 +132,38 @@ impl Assembler {
     }
 
     pub fn process(&mut self, text: &str) {
-        for (line_no, line) in text.lines().enumerate() {
+        for (i, line) in text.lines().enumerate() {
+            self.line_no = i + 1;
             match self.process_line(line) {
-                Err(e) => self.errors.push((line_no, e)),
+                Err(e) => self.errors.push((self.line_no, e)),
                 _ => {}
             }
         }
     }
 
-    fn process_internal(&mut self, text: &str) -> Result<(), ParserError> {
-        self.process_line("; +{")?;
-        for line in text.lines() {
-            self.process_line(line)?;
+    fn process_line(&mut self, line: &str) -> Result<(), ParserError> {
+        write!(self.expanded_source, "{}\n", line).unwrap();
+        let line = line.to_string();
+        let line = line.split(";").next().unwrap(); // Remove comments
+        let words: Vec<&str> = line.split_ascii_whitespace().collect();
+        if words.len() == 0 {
+            return Ok(());
         }
-        self.process_line("; }")?;
+        let verb = words[0];
+        let args = &words[1..];
+        self.process_statement(verb, args)?;
+        Ok(())
+    }
+
+    fn process_internal(&mut self, text: &str) -> Result<(), ParserError> {
+        self.process_line("; BEGIN {{")?;
+        for line in text.lines() {
+            let line = line.trim();
+            if !line.is_empty() {
+                self.process_line(&format!("    {}", line))?;
+            }
+        }
+        self.process_line("; }} END")?;
         Ok(())
     }
 
@@ -159,44 +177,30 @@ impl Assembler {
             Err(errs) => return Err(LinkerErrors(errs)),
         };
         let debug_info = DebugInfo::from(self.linker);
-        eprintln!("{}", self.processed);
+        let expanded_source = self.expanded_source;
         Ok(AssemblyResult {
+            expanded_source,
             binary,
             debug_info,
         })
     }
 
-    fn process_line(&mut self, line: &str) -> Result<(), ParserError> {
-        write!(self.processed, "{}\n", line).unwrap();
-        let line = line.to_string();
-        let line = line.split(";").next().unwrap(); // Remove comments
-        let words: Vec<&str> = line.split_ascii_whitespace().collect();
-        if words.len() == 0 {
-            return Ok(());
-        }
-        let verb = words[0];
-        let args = &words[1..];
-        self.process_statement(verb, args)
-    }
-
     fn process_statement(&mut self, verb: &str, args: &[&str]) -> Result<(), ParserError> {
         match verb {
             label_name if label_name.ends_with(":") =>
-                self.process_label(label_name)?,
+                self.process_label(&label_name[..label_name.len() - 1]),
             macro_name if macro_name.starts_with(".") =>
-                self.process_macro(macro_name, args)?,
+                self.process_macro(macro_name, args),
             op_name =>
-                self.process_instruction(op_name, args)?,
+                self.process_instruction(op_name, args),
         }
-        Ok(())
     }
 
-    fn process_label(&mut self, name: &str) -> Result<(), ParserError> {
-        let name = &name[..name.len() - 1];
-        if name.starts_with("_") {
-            self.linker.add_inner_label(name);
+    fn process_label(&mut self, label_name: &str) -> Result<(), ParserError> {
+        if label_name.starts_with("_") {
+            self.linker.add_inner_label(label_name);
         } else {
-            self.linker.add_top_level_label(name);
+            self.linker.add_top_level_label(label_name);
         }
         Ok(())
     }
@@ -206,52 +210,56 @@ impl Assembler {
             ".define" => {
                 let (name, value) = Assembler::expect_ident_and_int(macro_name, args)?;
                 self.linker.add_global_constant(name, value);
+                Ok(())
             }
             ".param" => {
                 let (name, size) = Assembler::expect_ident_and_int(macro_name, args)?;
                 self.linker.add_param(name, size);
                 self.linker.add_local_constant(&Assembler::sizeof_name(name), size);
+                Ok(())
             }
             ".local" => {
                 let (name, size) = Assembler::expect_ident_and_int(macro_name, args)?;
                 self.linker.add_local_var(name, size);
                 self.linker.add_local_constant(&Assembler::sizeof_name(name), size);
+                Ok(())
             }
-            ".word" => return self.process_word_macro(args),
+            ".word" => self.process_word_macro(args),
             ".string" => {
                 for arg in args {
                     if let Ok(val) = Assembler::expect_int_literal(arg) {
                         self.linker.add_raw_word(val);
                         continue;
                     }
-                    let st = Assembler::expect_string_literal(arg)?;
-                    for ch in st.chars() {
+                    let string = Assembler::expect_string_literal(arg)?;
+                    for ch in string.chars() {
                         self.linker.add_raw_word(ch as i32);
                     }
                 }
+                Ok(())
             }
             ".start_frame" => {
-                self.process_internal("
+                let extra_code = self.frame_extra_setup.clone();
+                let size = self.linker.cur_frame().locals_size;
+                self.process_internal(&format!("
                     loadi fp
                     loadi sp
                     storei fp
-                ")?;
+                    addsp {size}
+                    {extra_code}
+                ", extra_code = extra_code, size = size))?;
 
-                self.linker.add_inst("addsp", self.linker.cur_frame().locals_size);
-
-                let extra_blocks = self.frame_extra_setup
-                    .drain(..)
-                    .collect::<Vec<_>>();
-                for block in extra_blocks {
-                    self.process_internal(&block)?;
-                }
+                self.frame_extra_setup.clear();
+                Ok(())
             }
             ".end_frame" => {
-                self.linker.add_inst("addsp", -self.linker.cur_frame().locals_size);
-
-                self.process_instruction("storei", &["fp"])?;
+                self.process_internal(&format!("
+                    addsp -{size}
+                    storei fp
+                ", size = self.linker.cur_frame().locals_size))?;
 
                 self.frame_nloops = 0;
+                Ok(())
             }
             ".addr_of" => {
                 if args.len() != 1 {
@@ -260,11 +268,12 @@ impl Assembler {
                 let var_name = Assembler::expect_ident(args[0])?;
                 let addr_name = format!("{}.addr", var_name);
                 self.linker.add_local_var(&addr_name, 1);
-                self.frame_extra_setup.push(format!("
+                write!(self.frame_extra_setup, "
                     loadi fp
                     addi {var_name}
                     storef {addr_name}
-                ", var_name = var_name, addr_name = addr_name))
+                ", var_name = var_name, addr_name = addr_name).unwrap();
+                Ok(())
             }
             ".for" => {
                 if args.len() != 4 || args[2] != "to" {
@@ -285,6 +294,7 @@ impl Assembler {
                     limit_var,
                     label_name,
                 });
+                Ok(())
             }
             ".end_for" => {
                 match self.frame_cur_loop.clone() {
@@ -301,64 +311,69 @@ impl Assembler {
                         ", counter_var = counter_var, limit_var = limit_var, label_name = label_name))?
                 }
                 self.frame_cur_loop = None;
+                Ok(())
             }
-            ".call" => {
-                if args.len() == 0 {
-                    return Err(SyntaxError(format!("{} takes at least 1 arg", macro_name)));
-                }
-                let mut gen_code = String::new();
-                let call_target = args[0];
-                let mut call_args = args[1..].to_vec();
-                let nargs = call_args.len();
-                call_args.reverse();
-                let mut ret_target = None;
-                for arg in call_args.into_iter() {
-                    if let &[ty, val] = &arg.split(":").collect::<Vec<_>>()[..] {
-                        let op_name = match ty {
-                            "lf" => "loadf",
-                            "p" => "push",
-                            "ret" => {
-                                ret_target = Some(val);
-                                continue;
-                            }
-                            _ => return Err(SyntaxError(format!("T can only be f or p: {}", ty)))
-                        };
-                        write!(gen_code, "{} {}\n", op_name, val).unwrap();
-                    } else {
-                        return Err(SyntaxError(format!("expected T:VAL format: {}", arg)));
-                    }
-                }
-                if call_target.starts_with("env.") {
-                    let env_call_name = &call_target[4..];
-                    let epilogue = match ret_target {
-                        None => "addsp -1".to_string(),
-                        Some(target) => format!("storef {}", target),
-                    };
-                    write!(gen_code, "
-                        ecall .cc.{}
-                        {}
-                    ", env_call_name, epilogue).unwrap();
-                } else {
-                    let epilogue = match ret_target {
-                        None => format!("
-                            addsp -{}
-                        ", nargs + 1),
-                        Some(target) => format!("
-                            storef {}
-                            addsp -{}
-                        ", target, nargs - 1)
-                    };
-                    write!(gen_code, "
-                        push
-                        jal {call_target}
-                        {epilogue}
-                    ", call_target = call_target, epilogue = epilogue).unwrap();
-                }
-                self.process_internal(&gen_code)?;
-            }
-            unknown => return Err(UnknownMacro(unknown.to_string())),
+            ".call" => self.process_call_macro(args),
+            unknown => Err(UnknownMacro(unknown.to_string())),
         }
-        Ok(())
+    }
+
+    fn process_call_macro(&mut self, args: &[&str]) -> Result<(), ParserError> {
+        if args.len() == 0 {
+            return Err(SyntaxError(format!(".call takes at least 1 arg")));
+        }
+        let mut code = String::new();
+        let call_target = args[0];
+        let mut call_args = args[1..].to_vec();
+        let nargs = call_args.len();
+        call_args.reverse();
+        let mut ret_target = None;
+        for arg in call_args.into_iter() {
+            if let &[ty, val] = &arg.split(":").collect::<Vec<_>>()[..] {
+                let op_name = match ty {
+                    "lf" => "loadf",
+                    "p" => "push",
+                    "ret" => {
+                        ret_target = Some(val);
+                        continue;
+                    }
+                    _ => return Err(SyntaxError(format!("unexpected ty: {}", ty)))
+                };
+                write!(code, "{} {}\n", op_name, val).unwrap();
+            } else {
+                return Err(SyntaxError(format!("expected T:VAL format: {}", arg)));
+            }
+        }
+        if call_target.starts_with("env.") {
+            let env_call_name = &call_target[4..];
+            let epilogue = match ret_target {
+                None =>
+                    "addsp -1".to_string(),
+                Some(target) => format!("
+                    storef {}
+                ", target),
+            };
+            write!(code, "
+                ecall .cc.{}
+                {}
+            ", env_call_name, epilogue).unwrap();
+        } else {
+            let epilogue = match ret_target {
+                None => format!("
+                    addsp -{}
+                ", nargs + 1),
+                Some(target) => format!("
+                    storef {}
+                    addsp -{}
+                ", target, nargs - 1)
+            };
+            write!(code, "
+                push
+                jal {call_target}
+                {epilogue}
+            ", call_target = call_target, epilogue = epilogue).unwrap();
+        }
+        self.process_internal(&code)
     }
 
     fn process_word_macro(&mut self, args: &[&str]) -> Result<(), ParserError> {
