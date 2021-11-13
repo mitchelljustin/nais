@@ -6,19 +6,17 @@ use std::io::{Read, Write};
 use RetCode::*;
 
 use crate::isa::*;
-use crate::machine::{Machine, MachineError};
 use crate::machine::MachineStatus::Stopped;
+use crate::machine::{Machine, MachineError};
 use crate::mem::segs;
 
 const FIRST_FD: i32 = 3;
-
 
 pub(crate) struct Environment {
     heap_ptr: i32,
     files_open: HashMap<i32, File>,
     next_fd: i32,
 }
-
 
 impl Default for Environment {
     fn default() -> Self {
@@ -41,10 +39,8 @@ pub enum RetCode {
 
 fn exit(m: &mut Machine) -> i32 {
     match pop(m) {
-        Some(0) =>
-            m.set_status(Stopped),
-        Some(errcode) =>
-            m.set_error(MachineError::ProgramExit(errcode)),
+        Some(0) => m.set_status(Stopped),
+        Some(errcode) => m.set_error(MachineError::ProgramExit(errcode)),
         None => {}
     };
     OK as i32
@@ -152,7 +148,12 @@ fn read_machine_memory(m: &mut Machine, buf_ptr: i32, buf_len: i32) -> Result<Ve
         .collect())
 }
 
-fn write_machine_memory(m: &mut Machine, buf_ptr: i32, buf_len: i32, data: Vec<u8>) -> Result<(), RetCode> {
+fn write_machine_memory(
+    m: &mut Machine,
+    buf_ptr: i32,
+    buf_len: i32,
+    data: Vec<u8>,
+) -> Result<(), RetCode> {
     bounds_check(buf_ptr, buf_len)?;
     for (addr, val) in (buf_ptr..(buf_ptr + buf_len)).zip(data) {
         m.store(addr, val as i32);

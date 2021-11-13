@@ -1,8 +1,8 @@
-use std::{fmt, io};
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter, Write as FmtWrite};
 use std::io::Write;
 use std::ops::Range;
+use std::{fmt, io};
 
 use MachineError::*;
 use MachineStatus::*;
@@ -11,7 +11,7 @@ use crate::encoder::Encoder;
 use crate::environment::Environment;
 use crate::isa::Inst;
 use crate::linker::{DebugInfo, ResolvedTarget};
-use crate::mem::{addrs, inst_loc_to_addr, Memory, segs};
+use crate::mem::{addrs, inst_loc_to_addr, segs, Memory};
 use crate::util;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -145,12 +145,13 @@ impl Machine {
     }
 
     pub fn breakpoint(&mut self) {
-        println!("{}", match self.status {
-            Error(_) =>
-                "ERROR BREAKPOINT",
-            _ =>
-                "USER BREAKPOINT",
-        });
+        println!(
+            "{}",
+            match self.status {
+                Error(_) => "ERROR BREAKPOINT",
+                _ => "USER BREAKPOINT",
+            }
+        );
         self.set_status(Debugging);
     }
 
@@ -178,41 +179,25 @@ impl Machine {
                 "n" | "next" => {
                     return;
                 }
-                "pc" => {
-                    match int_args[..] {
-                        [mid, len] =>
-                            println!("{}", self.code_dump_around(mid, -len..len + 1)),
-                        [len] =>
-                            println!("{}", self.code_dump_around_pc(-len..len + 1)),
-                        [] =>
-                            println!("{}", self.code_dump_around_pc(-15..16)),
-                        _ => {
-                            println!("format: pc addr [range]");
-                        }
+                "pc" => match int_args[..] {
+                    [mid, len] => println!("{}", self.code_dump_around(mid, -len..len + 1)),
+                    [len] => println!("{}", self.code_dump_around_pc(-len..len + 1)),
+                    [] => println!("{}", self.code_dump_around_pc(-15..16)),
+                    _ => {
+                        println!("format: pc addr [range]");
                     }
-                }
-                "ps" => {
-                    match int_args[..] {
-                        [mid, len] =>
-                            println!("{}", self.stack_dump((mid - len)..(mid + len + 1))),
-                        [mid] =>
-                            println!("{}", self.stack_dump((mid - 4)..(mid + 4))),
-                        [] =>
-                            println!("{}", self.stack_dump_all()),
-                        _ =>
-                            println!("format: ps [addr] [range]"),
-                    }
-                }
-                "pm" => {
-                    match int_args[..] {
-                        [start, len] =>
-                            println!("{}", self.mem_dump(start..(start + len))),
-                        [start] =>
-                            println!("{}", self.mem_dump(start..(start + 1))),
-                        _ =>
-                            println!("format: pm start [len]"),
-                    }
-                }
+                },
+                "ps" => match int_args[..] {
+                    [mid, len] => println!("{}", self.stack_dump((mid - len)..(mid + len + 1))),
+                    [mid] => println!("{}", self.stack_dump((mid - 4)..(mid + 4))),
+                    [] => println!("{}", self.stack_dump_all()),
+                    _ => println!("format: ps [addr] [range]"),
+                },
+                "pm" => match int_args[..] {
+                    [start, len] => println!("{}", self.mem_dump(start..(start + len))),
+                    [start] => println!("{}", self.mem_dump(start..(start + 1))),
+                    _ => println!("format: pm start [len]"),
+                },
                 "st" => {
                     println!("{:?}", self);
                 }
@@ -267,8 +252,16 @@ impl Machine {
                 }
             };
             match self.debug_info.resolved_idents.get(&addr) {
-                Some(ResolvedTarget { idents, label_type, .. }) => {
-                    write!(out, " {:12} {}", idents.first().unwrap_or(&"".to_string()), label_type).unwrap();
+                Some(ResolvedTarget {
+                    idents, label_type, ..
+                }) => {
+                    write!(
+                        out,
+                        " {:12} {}",
+                        idents.first().unwrap_or(&"".to_string()),
+                        label_type
+                    )
+                    .unwrap();
                 }
                 None => out.write_str(&" ".repeat(15)).unwrap(),
             }
@@ -291,54 +284,48 @@ impl Machine {
 
     pub fn stack_dump(&self, mut addr_range: Range<i32>) -> String {
         segs::STACK.clamp_range(&mut addr_range);
-        let frame = self.debug_info.frame_for_inst_addr
-            .get(&self.getpc());
+        let frame = self.debug_info.frame_for_inst_addr.get(&self.getpc());
         let var_for_offset = match frame {
-            Some(frame) => self.debug_info.call_frames
+            Some(frame) => self
+                .debug_info
+                .call_frames
                 .get(frame)
                 .unwrap()
-                .local_mappings.iter()
+                .local_mappings
+                .iter()
                 .filter(|(name, _)| name.len() > 0 && !name.starts_with("."))
                 .map(|(name, offset)| (offset, name))
                 .collect(),
             None => HashMap::new(),
         };
         let fp = self.mem[addrs::FP];
-        let extra_infos = addr_range.clone().map(
-            |addr| {
-                vec![
-                    match addr {
-                        addrs::PC =>
-                            " pc",
-                        addrs::SP =>
-                            " sp",
-                        addrs::FP =>
-                            " fp",
-                        addrs::BOUNDARY =>
-                            " --",
-                        _ =>
-                            ""
-                    }.to_string(),
-                    match addr - fp {
-                        -3 => " retval".to_string(),
-                        -2 => " retaddr".to_string(),
-                        -1 => " saved fp".to_string(),
-                        offset => {
-                            match var_for_offset.get(&offset) {
-                                None =>
-                                    " ".repeat(13),
-                                Some(var_name) =>
-                                    format!(" {:12}", var_name),
-                            }
-                        }
+        let extra_infos = addr_range.clone().map(|addr| {
+            vec![
+                match addr {
+                    addrs::PC => " pc",
+                    addrs::SP => " sp",
+                    addrs::FP => " fp",
+                    addrs::BOUNDARY => " --",
+                    _ => "",
+                }
+                .to_string(),
+                match addr - fp {
+                    -3 => " retval".to_string(),
+                    -2 => " retaddr".to_string(),
+                    -1 => " saved fp".to_string(),
+                    offset => match var_for_offset.get(&offset) {
+                        None => " ".repeat(13),
+                        Some(var_name) => format!(" {:12}", var_name),
                     },
-                    if addr == fp {
-                        " <======== FP".to_string()
-                    } else {
-                        " ".repeat(13)
-                    }
-                ].join("")
-            });
+                },
+                if addr == fp {
+                    " <======== FP".to_string()
+                } else {
+                    " ".repeat(13)
+                },
+            ]
+            .join("")
+        });
         addr_range
             .map(|addr| self.formatted_stack_val(addr).unwrap())
             .zip(extra_infos)
@@ -354,13 +341,19 @@ impl Machine {
                     return "INVALID".to_string();
                 }
                 let val = self.mem[addr];
-                let maybe_char =
-                    if (0x20..=0x7f).contains(&val) {
-                        format!(" '{}'", char::from(val as u8))
-                    } else {
-                        "".to_string()
-                    };
-                format!("{:01x} {:04x}: {:8x} [{:12}]{}", addr >> 16, addr & 0xffff, val, val, maybe_char)
+                let maybe_char = if (0x20..=0x7f).contains(&val) {
+                    format!(" '{}'", char::from(val as u8))
+                } else {
+                    "".to_string()
+                };
+                format!(
+                    "{:01x} {:04x}: {:8x} [{:12}]{}",
+                    addr >> 16,
+                    addr & 0xffff,
+                    val,
+                    val,
+                    maybe_char
+                )
             })
             .collect::<Vec<String>>()
             .join("\n")
@@ -427,7 +420,7 @@ impl Machine {
                 self.set_error(e);
                 return;
             }
-            Ok(inst) => inst
+            Ok(inst) => inst,
         };
         (inst.op.func)(self, inst.arg);
         self.setpc(self.getpc() + 1);
@@ -450,7 +443,7 @@ impl Machine {
             Some(inst) => Ok(Inst {
                 addr: Some(addr),
                 ..inst
-            })
+            }),
         }
     }
 }

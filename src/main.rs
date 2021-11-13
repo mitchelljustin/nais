@@ -6,14 +6,14 @@ use machine::*;
 
 use crate::assembler::{assemble_file, AssemblyResult};
 
-mod linker;
-mod machine;
-mod isa;
-mod util;
-mod mem;
 mod assembler;
 mod encoder;
 mod environment;
+mod isa;
+mod linker;
+mod machine;
+mod mem;
+mod util;
 
 #[derive(Clap)]
 #[clap(version = "1.0", author = "Mitchell Justin")]
@@ -23,7 +23,7 @@ struct Opts {
     #[clap(short, long)]
     debug_on_err: bool,
 
-    #[clap(short, default_value="1000000")]
+    #[clap(short, default_value = "1000000")]
     max_cycles: usize,
 }
 
@@ -54,8 +54,7 @@ fn assemble_and_load_file(machine: &mut Machine, filename: String) {
         debug_info,
         expanded_source,
     } = match assemble_file(&filename) {
-        Err(e) =>
-            panic!("Error assembling {}: \n{}\n", filename, e),
+        Err(e) => panic!("Error assembling {}: \n{}\n", filename, e),
         Ok(r) => r,
     };
     machine.debug_info = debug_info;

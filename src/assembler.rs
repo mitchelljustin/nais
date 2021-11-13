@@ -1,7 +1,7 @@
-use std::{cmp, fmt, fs};
 use std::fmt::{Formatter, Write};
 use std::io;
 use std::num::ParseIntError;
+use std::{cmp, fmt, fs};
 
 use AssemblyError::*;
 use ParserError::*;
@@ -77,7 +77,6 @@ pub fn assemble_from_source<T: io::Read>(mut source: T) -> Result<AssemblyResult
     assembler.finish()
 }
 
-
 #[derive(Clone)]
 struct ForLoop {
     counter_var: String,
@@ -98,7 +97,6 @@ struct Assembler {
 }
 
 impl Assembler {
-
     pub fn new() -> Assembler {
         Assembler {
             linker: Linker::new(),
@@ -124,7 +122,8 @@ impl Assembler {
         self.linker.add_global_constant("retval", -3);
         for (callcode, (_, call_name)) in crate::environment::CALL_LIST.iter().enumerate() {
             let const_name = format!(".cc.{}", call_name);
-            self.linker.add_global_constant(&const_name, callcode as i32);
+            self.linker
+                .add_global_constant(&const_name, callcode as i32);
         }
         self.linker.add_global_constant(".fd.stdin", 1);
         self.linker.add_global_constant(".fd.stdout", 1);
@@ -187,12 +186,11 @@ impl Assembler {
 
     fn process_statement(&mut self, verb: &str, args: &[&str]) -> Result<(), ParserError> {
         match verb {
-            label_name if label_name.ends_with(":") =>
-                self.process_label(&label_name[..label_name.len() - 1]),
-            macro_name if macro_name.starts_with(".") =>
-                self.process_macro(macro_name, args),
-            op_name =>
-                self.process_instruction(op_name, args),
+            label_name if label_name.ends_with(":") => {
+                self.process_label(&label_name[..label_name.len() - 1])
+            }
+            macro_name if macro_name.starts_with(".") => self.process_macro(macro_name, args),
+            op_name => self.process_instruction(op_name, args),
         }
     }
 
@@ -215,13 +213,15 @@ impl Assembler {
             ".param" => {
                 let (name, size) = Assembler::expect_ident_and_int(macro_name, args)?;
                 self.linker.add_param(name, size);
-                self.linker.add_local_constant(&Assembler::sizeof_name(name), size);
+                self.linker
+                    .add_local_constant(&Assembler::sizeof_name(name), size);
                 Ok(())
             }
             ".local" => {
                 let (name, size) = Assembler::expect_ident_and_int(macro_name, args)?;
                 self.linker.add_local_var(name, size);
-                self.linker.add_local_constant(&Assembler::sizeof_name(name), size);
+                self.linker
+                    .add_local_constant(&Assembler::sizeof_name(name), size);
                 Ok(())
             }
             ".word" => self.process_word_macro(args),
@@ -241,54 +241,78 @@ impl Assembler {
             ".start_frame" => {
                 let extra_code = self.frame_extra_setup.clone();
                 let size = self.linker.cur_frame().locals_size;
-                self.process_internal(&format!("
+                self.process_internal(&format!(
+                    "
                     loadi fp
                     loadi sp
                     storei fp
                     addsp {size}
                     {extra_code}
-                ", extra_code = extra_code, size = size))?;
+                ",
+                    extra_code = extra_code,
+                    size = size
+                ))?;
 
                 self.frame_extra_setup.clear();
                 Ok(())
             }
             ".end_frame" => {
-                self.process_internal(&format!("
+                self.process_internal(&format!(
+                    "
                     addsp -{size}
                     storei fp
-                ", size = self.linker.cur_frame().locals_size))?;
+                ",
+                    size = self.linker.cur_frame().locals_size
+                ))?;
 
                 self.frame_nloops = 0;
                 Ok(())
             }
             ".addr_of" => {
                 if args.len() != 1 {
-                    return Err(SyntaxError(format!("{} takes 1 arg: {:?}", macro_name, args)));
+                    return Err(SyntaxError(format!(
+                        "{} takes 1 arg: {:?}",
+                        macro_name, args
+                    )));
                 }
                 let var_name = Assembler::expect_ident(args[0])?;
                 let addr_name = format!("{}.addr", var_name);
                 self.linker.add_local_var(&addr_name, 1);
-                write!(self.frame_extra_setup, "
+                write!(
+                    self.frame_extra_setup,
+                    "
                     loadi fp
                     addi {var_name}
                     storef {addr_name}
-                ", var_name = var_name, addr_name = addr_name).unwrap();
+                ",
+                    var_name = var_name,
+                    addr_name = addr_name
+                )
+                .unwrap();
                 Ok(())
             }
             ".for" => {
                 if args.len() != 4 || args[2] != "to" {
-                    return Err(SyntaxError(format!("{} format: `var` `init` to `limit`", macro_name)));
+                    return Err(SyntaxError(format!(
+                        "{} format: `var` `init` to `limit`",
+                        macro_name
+                    )));
                 }
                 let counter_var = Assembler::expect_ident(args[0])?.to_string();
                 let init_val = Assembler::expect_int_literal(args[1])?.to_string();
                 let limit_var = Assembler::expect_ident(args[3])?.to_string();
                 let label_name = format!("_loop.{}", self.frame_nloops);
                 self.frame_nloops += 1;
-                self.process_internal(&format!("
+                self.process_internal(&format!(
+                    "
                     push {init_val}
                     storef {counter_var}
                     {label_name}:
-                ", counter_var = counter_var, init_val = init_val, label_name = label_name))?;
+                ",
+                    counter_var = counter_var,
+                    init_val = init_val,
+                    label_name = label_name
+                ))?;
                 self.frame_cur_loop = Some(ForLoop {
                     counter_var,
                     limit_var,
@@ -298,17 +322,24 @@ impl Assembler {
             }
             ".end_for" => {
                 match self.frame_cur_loop.clone() {
-                    None =>
-                        return Err(StructureError("no current for loop to end".to_string())),
-                    Some(ForLoop { label_name, counter_var, limit_var }) =>
-                        self.process_internal(&format!("
+                    None => return Err(StructureError("no current for loop to end".to_string())),
+                    Some(ForLoop {
+                        label_name,
+                        counter_var,
+                        limit_var,
+                    }) => self.process_internal(&format!(
+                        "
                             loadf {counter_var}
                             addi 1
                             storef {counter_var}
                             loadf {counter_var}
                             loadf {limit_var}
                             blt {label_name}
-                        ", counter_var = counter_var, limit_var = limit_var, label_name = label_name))?
+                        ",
+                        counter_var = counter_var,
+                        limit_var = limit_var,
+                        label_name = label_name
+                    ))?,
                 }
                 self.frame_cur_loop = None;
                 Ok(())
@@ -337,7 +368,7 @@ impl Assembler {
                         ret_target = Some(val);
                         continue;
                     }
-                    _ => return Err(SyntaxError(format!("unexpected ty: {}", ty)))
+                    _ => return Err(SyntaxError(format!("unexpected ty: {}", ty))),
                 };
                 write!(code, "{} {}\n", op_name, val).unwrap();
             } else {
@@ -347,31 +378,51 @@ impl Assembler {
         if call_target.starts_with("env.") {
             let env_call_name = &call_target[4..];
             let epilogue = match ret_target {
-                None =>
-                    "addsp -1".to_string(),
-                Some(target) => format!("
+                None => "addsp -1".to_string(),
+                Some(target) => format!(
+                    "
                     storef {}
-                ", target),
+                ",
+                    target
+                ),
             };
-            write!(code, "
+            write!(
+                code,
+                "
                 ecall .cc.{}
                 {}
-            ", env_call_name, epilogue).unwrap();
+            ",
+                env_call_name, epilogue
+            )
+            .unwrap();
         } else {
             let epilogue = match ret_target {
-                None => format!("
+                None => format!(
+                    "
                     addsp -{}
-                ", nargs + 1),
-                Some(target) => format!("
+                ",
+                    nargs + 1
+                ),
+                Some(target) => format!(
+                    "
                     storef {}
                     addsp -{}
-                ", target, nargs - 1)
+                ",
+                    target,
+                    nargs - 1
+                ),
             };
-            write!(code, "
+            write!(
+                code,
+                "
                 push
                 jal {call_target}
                 {epilogue}
-            ", call_target = call_target, epilogue = epilogue).unwrap();
+            ",
+                call_target = call_target,
+                epilogue = epilogue
+            )
+            .unwrap();
         }
         self.process_internal(&code)
     }
@@ -389,7 +440,9 @@ impl Assembler {
             } else if let Ok(string) = Assembler::expect_string_literal(arg) {
                 bytes.extend(string.bytes());
             } else {
-                return Err(SyntaxError(".word expects int or string literals".to_string()));
+                return Err(SyntaxError(
+                    ".word expects int or string literals".to_string(),
+                ));
             }
         }
         let nbytes = bytes.len();
@@ -425,15 +478,11 @@ impl Assembler {
             })
             .partition(|r| r.is_ok());
         if !errs.is_empty() {
-            return Err(MultipleErrors(errs
-                .into_iter()
-                .map(|r| r.unwrap_err())
-                .collect()));
+            return Err(MultipleErrors(
+                errs.into_iter().map(|r| r.unwrap_err()).collect(),
+            ));
         }
-        let target: Vec<_> = terms
-            .into_iter()
-            .map(|r| r.unwrap())
-            .collect();
+        let target: Vec<_> = terms.into_iter().map(|r| r.unwrap()).collect();
         self.linker.add_placeholder_inst(op_name, target);
         Ok(())
     }
@@ -459,11 +508,17 @@ impl Assembler {
         let mut chars = arg.chars();
         let first_char = chars.next().unwrap();
         if !first_char.is_alphabetic() && first_char != '_' {
-            return Err(SyntaxError(format!("identifier must start with letter or '_': {}", arg)));
+            return Err(SyntaxError(format!(
+                "identifier must start with letter or '_': {}",
+                arg
+            )));
         }
         for ch in chars {
             if !ch.is_alphanumeric() && ch != '_' && ch != '.' {
-                return Err(SyntaxError(format!("identifier must only contain alphanum, '_' or '.': {}", arg)));
+                return Err(SyntaxError(format!(
+                    "identifier must only contain alphanum, '_' or '.': {}",
+                    arg
+                )));
             }
         }
         Ok(arg)
@@ -495,13 +550,19 @@ impl Assembler {
         Err(_NotAnInteger)
     }
 
-    fn expect_ident_and_int<'a>(verb: &'a str, args: &'a [&'a str]) -> Result<(&'a str, i32), ParserError> {
+    fn expect_ident_and_int<'a>(
+        verb: &'a str,
+        args: &'a [&'a str],
+    ) -> Result<(&'a str, i32), ParserError> {
         if let &[ident, int] = args {
             let ident = Assembler::expect_ident(ident)?;
             let int = Assembler::expect_int_literal(int)?;
             Ok((ident, int))
         } else {
-            Err(SyntaxError(format!("{} expects ident + integer literal: {:?}", verb, args)))
+            Err(SyntaxError(format!(
+                "{} expects ident + integer literal: {:?}",
+                verb, args
+            )))
         }
     }
 

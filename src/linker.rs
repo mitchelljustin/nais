@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::fmt::{Display, Formatter};
 use std::fmt;
+use std::fmt::{Display, Formatter};
 use std::ops::Range;
 
 use crate::encoder::Encoder;
@@ -88,11 +88,10 @@ impl Display for LinkerError {
             MissingTarget(inst, target) => {
                 write!(f, "MissingTarget({} \"{:?}\")", inst, target)
             }
-            other => write!(f, "{:?}", other)
+            other => write!(f, "{:?}", other),
         }
     }
 }
-
 
 #[derive(Clone, Debug)]
 pub enum TargetTerm {
@@ -134,7 +133,8 @@ impl Linker {
 
     pub fn add_inst(&mut self, op_name: &str, arg: i32) {
         let addr = self.next_inst_addr();
-        self.frame_for_inst_addr.insert(addr, self.cur_frame_name.clone());
+        self.frame_for_inst_addr
+            .insert(addr, self.cur_frame_name.clone());
         match self.encoder.make_inst(op_name, arg) {
             Some(inst) => {
                 self.instructions.push(Inst {
@@ -143,8 +143,8 @@ impl Linker {
                 });
             }
             None => {
-                self.errors.push(LinkerError::NoSuchOp(
-                    addr, op_name.to_string()));
+                self.errors
+                    .push(LinkerError::NoSuchOp(addr, op_name.to_string()));
                 self.instructions.push(Inst {
                     opcode: 0x00,
                     op: OP_INVALID,
@@ -173,31 +173,31 @@ impl Linker {
             self.end_current_frame();
         }
         let next_addr = self.next_inst_addr();
-        self.add_global_constant(
-            &format!(".L.{}.start", name),
-            next_addr,
+        self.add_global_constant(&format!(".L.{}.start", name), next_addr);
+        self.top_level_labels.insert(
+            name.to_string(),
+            TopLevelLabel {
+                name: name.to_string(),
+                addr_range: next_addr..-1,
+                local_mappings: HashMap::new(),
+                inner_labels: HashMap::new(),
+                locals_size: 0,
+                params_size: 0,
+            },
         );
-        self.top_level_labels.insert(name.to_string(), TopLevelLabel {
-            name: name.to_string(),
-            addr_range: next_addr..-1,
-            local_mappings: HashMap::new(),
-            inner_labels: HashMap::new(),
-            locals_size: 0,
-            params_size: 0,
-        });
         self.cur_frame_name = name.to_string();
     }
 
     pub fn add_inner_label(&mut self, name: &str) {
         let addr = self.next_inst_addr();
-        self.cur_frame_mut().inner_labels.insert(name.to_string(), addr);
+        self.cur_frame_mut()
+            .inner_labels
+            .insert(name.to_string(), addr);
     }
 
     pub(crate) fn cur_frame_mut(&mut self) -> &mut TopLevelLabel {
         match self.top_level_labels.get(&self.cur_frame_name) {
-            Some(_) => {
-                self.top_level_labels.get_mut(&self.cur_frame_name).unwrap()
-            }
+            Some(_) => self.top_level_labels.get_mut(&self.cur_frame_name).unwrap(),
             None => {
                 const DEFAULT_ENTRY_LABEL: &str = "entry";
                 self.errors.push(LinkerError::NeedToDefineEntryLabel);
@@ -212,18 +212,16 @@ impl Linker {
     }
 
     pub fn add_local_constant(&mut self, name: &str, value: i32) {
-        self.cur_frame_mut().local_mappings.insert(
-            name.to_string(),
-            value,
-        );
+        self.cur_frame_mut()
+            .local_mappings
+            .insert(name.to_string(), value);
     }
 
     pub fn add_local_var(&mut self, name: &str, size: i32) {
         let frame = self.cur_frame_mut();
-        frame.local_mappings.insert(
-            name.to_string(),
-            frame.locals_size,
-        );
+        frame
+            .local_mappings
+            .insert(name.to_string(), frame.locals_size);
         frame.locals_size += size;
     }
 
@@ -258,10 +256,7 @@ impl Linker {
     fn end_current_frame(&mut self) {
         let next_addr = self.next_inst_addr();
         self.cur_frame_mut().addr_range.end = next_addr;
-        self.add_global_constant(
-            &format!(".L.{}.end", self.cur_frame_name),
-            next_addr,
-        );
+        self.add_global_constant(&format!(".L.{}.end", self.cur_frame_name), next_addr);
         self.add_global_constant(
             &format!(".L.{}.len", self.cur_frame_name),
             self.cur_frame().addr_range.len() as i32,
@@ -277,10 +272,7 @@ impl Linker {
         // Top level label
         let inst_addr = inst_loc_to_addr(inst_loc);
         if let Some(label) = self.top_level_labels.get(name) {
-            let value = Linker::pc_relative(
-                label.addr_range.start,
-                inst_addr,
-            );
+            let value = Linker::pc_relative(label.addr_range.start, inst_addr);
             return Some((value, TopLevelLabel));
         }
         // Local frame
@@ -288,10 +280,7 @@ impl Linker {
         let frame = self.top_level_labels.get(frame_name)?;
         // Local code (inner label)
         if let Some(&addr) = frame.inner_labels.get(name) {
-            let value = Linker::pc_relative(
-                addr,
-                inst_addr,
-            );
+            let value = Linker::pc_relative(addr, inst_addr);
             return Some((value, InnerLabel));
         }
         // Local var
@@ -301,7 +290,11 @@ impl Linker {
         None
     }
 
-    fn resolve(&self, inst_loc: usize, target: &RelocationTarget) -> Result<ResolvedTarget, Vec<String>> {
+    fn resolve(
+        &self,
+        inst_loc: usize,
+        target: &RelocationTarget,
+    ) -> Result<ResolvedTarget, Vec<String>> {
         let inst_addr = inst_loc_to_addr(inst_loc);
         if let Some(entry) = self.resolved_targets.get(&inst_addr) {
             return Ok(entry.clone());
@@ -322,7 +315,8 @@ impl Linker {
                 .cloned()
                 .collect());
         }
-        let resolutions = resolutions.into_iter()
+        let resolutions = resolutions
+            .into_iter()
             .map(|r| r.unwrap())
             .collect::<Vec<_>>();
         let value = resolutions.iter().map(|(v, _)| v).sum();
@@ -352,8 +346,7 @@ impl Linker {
                     inst_updates.push((inst_loc, resolved.value));
                     self.resolved_targets.insert(inst_addr, resolved);
                 }
-                Err(unresolved) =>
-                    unrelocated.push((inst_loc, unresolved)),
+                Err(unresolved) => unrelocated.push((inst_loc, unresolved)),
             }
         }
         for (loc, arg) in inst_updates.into_iter() {
@@ -370,16 +363,18 @@ impl Linker {
         let mut errors: Vec<LinkerError> = self.errors.clone();
 
         if let Err(unrelocated) = self.relocate() {
-            errors.extend(unrelocated
-                .into_iter()
-                .map(|(loc, unresolved)|
-                    MissingTarget(self.instructions[loc], unresolved))
+            errors.extend(
+                unrelocated
+                    .into_iter()
+                    .map(|(loc, unresolved)| MissingTarget(self.instructions[loc], unresolved)),
             );
         }
         if !errors.is_empty() {
             return Err(errors);
         }
-        let bin = self.instructions.iter()
+        let bin = self
+            .instructions
+            .iter()
             .map(|inst| self.encoder.encode(inst))
             .collect();
         Ok(bin)
@@ -392,13 +387,13 @@ impl Linker {
 
 impl Display for Linker {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.instructions
-            .iter()
-            .map(|inst| inst.to_string())
-            .collect::<Vec<_>>()
-            .join("\n")
+        f.write_str(
+            &self
+                .instructions
+                .iter()
+                .map(|inst| inst.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
         )
     }
 }
-
-

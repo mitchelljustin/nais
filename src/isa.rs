@@ -1,5 +1,5 @@
-use std::fmt::{Debug, Display, Formatter};
 use std::fmt;
+use std::fmt::{Debug, Display, Formatter};
 
 use crate::environment;
 use crate::machine::MachineError;
@@ -243,7 +243,6 @@ macro_rules! logical_shift_funcs {
     };
 }
 
-
 logical_shift_funcs! {
     shl ( << );
     shr ( >> );
@@ -268,19 +267,20 @@ impl Display for Inst {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let addr = match self.addr {
             None => String::new(),
-            Some(addr) => format!("{:x} ", addr)
+            Some(addr) => format!("{:x} ", addr),
         };
         let arg_trunc = self.arg & 0xffffff;
-        write!(f, "{}{:6} {:6x} [{:4}]",
-               addr, self.op.name, arg_trunc, self.arg)
+        write!(
+            f,
+            "{}{:6} {:6x} [{:4}]",
+            addr, self.op.name, arg_trunc, self.arg
+        )
     }
 }
 
 impl Debug for Op {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("OpFn")
-            .field("name", &self.name)
-            .finish()
+        f.debug_struct("OpFn").field("name", &self.name).finish()
     }
 }
 

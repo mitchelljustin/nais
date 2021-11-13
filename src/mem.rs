@@ -39,11 +39,7 @@ pub mod segs {
         name: "heap",
         addr_range: 0x2_0000..0x8_0000, // 384 KiW
     };
-    pub const ALL: &[&'static Segment] = &[
-        &STACK,
-        &CODE,
-        &HEAP,
-    ];
+    pub const ALL: &[&'static Segment] = &[&STACK, &CODE, &HEAP];
     pub const ADDR_SPACE: Range<i32> = ALL[0].start()..ALL[ALL.len() - 1].end();
 }
 
@@ -52,16 +48,16 @@ pub(crate) mod addrs {
     pub const CODE_ENTRY: i32 = super::segs::CODE.start();
 
     // Stack addresses
-    pub const PC: i32           = 0x00_00_00_00;
-    pub const SP: i32           = 0x00_00_00_01;
-    pub const FP: i32           = 0x00_00_00_02;
-    pub const BOUNDARY: i32     = 0x00_00_00_03;
+    pub const PC: i32 = 0x00_00_00_00;
+    pub const SP: i32 = 0x00_00_00_01;
+    pub const FP: i32 = 0x00_00_00_02;
+    pub const BOUNDARY: i32 = 0x00_00_00_03;
 
     // Stack initial values
-    pub const INIT_PC: i32          = CODE_ENTRY;
-    pub const INIT_SP: i32          = BOUNDARY + 1;
-    pub const INIT_FP: i32          = 0x00_ff_ff_ff;
-    pub const INIT_BOUNDARY: i32    = 0x00_bb_bb_bb;
+    pub const INIT_PC: i32 = CODE_ENTRY;
+    pub const INIT_SP: i32 = BOUNDARY + 1;
+    pub const INIT_FP: i32 = 0x00_ff_ff_ff;
+    pub const INIT_BOUNDARY: i32 = 0x00_bb_bb_bb;
 }
 
 pub fn inst_loc_to_addr(loc: usize) -> i32 {
@@ -78,10 +74,10 @@ impl Memory {
             vec: vec![0i32; segs::ADDR_SPACE.len()],
         };
         // Initialize stack
-        mem[addrs::PC]          = addrs::INIT_PC;
-        mem[addrs::SP]          = addrs::INIT_SP;
-        mem[addrs::FP]          = addrs::INIT_FP;
-        mem[addrs::BOUNDARY]    = addrs::INIT_BOUNDARY;
+        mem[addrs::PC] = addrs::INIT_PC;
+        mem[addrs::SP] = addrs::INIT_SP;
+        mem[addrs::FP] = addrs::INIT_FP;
+        mem[addrs::BOUNDARY] = addrs::INIT_BOUNDARY;
         mem
     }
 }
