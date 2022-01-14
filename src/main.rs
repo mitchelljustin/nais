@@ -1,3 +1,5 @@
+#![feature(decl_macro)]
+
 use std::fs;
 
 use clap::Clap;
@@ -28,7 +30,7 @@ struct Opts {
 }
 
 fn main() {
-    let opts: Opts = Opts::parse();
+    let opts = Opts::parse();
 
     let mut machine = Machine::new();
     machine.max_cycles = opts.max_cycles;

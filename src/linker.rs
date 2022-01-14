@@ -144,7 +144,7 @@ impl Linker {
             }
             None => {
                 self.errors
-                    .push(LinkerError::NoSuchOp(addr, op_name.to_string()));
+                    .push(LinkerError::NoSuchOp(addr, op_name.to_owned()));
                 self.instructions.push(Inst {
                     opcode: 0x00,
                     op: OP_INVALID,
@@ -175,9 +175,9 @@ impl Linker {
         let next_addr = self.next_inst_addr();
         self.add_global_constant(&format!(".L.{}.start", name), next_addr);
         self.top_level_labels.insert(
-            name.to_string(),
+            name.to_owned(),
             TopLevelLabel {
-                name: name.to_string(),
+                name: name.to_owned(),
                 addr_range: next_addr..-1,
                 local_mappings: HashMap::new(),
                 inner_labels: HashMap::new(),
@@ -185,14 +185,14 @@ impl Linker {
                 params_size: 0,
             },
         );
-        self.cur_frame_name = name.to_string();
+        self.cur_frame_name = name.to_owned();
     }
 
     pub fn add_inner_label(&mut self, name: &str) {
         let addr = self.next_inst_addr();
         self.cur_frame_mut()
             .inner_labels
-            .insert(name.to_string(), addr);
+            .insert(name.to_owned(), addr);
     }
 
     pub(crate) fn cur_frame_mut(&mut self) -> &mut TopLevelLabel {
@@ -214,28 +214,28 @@ impl Linker {
     pub fn add_local_constant(&mut self, name: &str, value: i32) {
         self.cur_frame_mut()
             .local_mappings
-            .insert(name.to_string(), value);
+            .insert(name.to_owned(), value);
     }
 
     pub fn add_local_var(&mut self, name: &str, size: i32) {
         let frame = self.cur_frame_mut();
         frame
             .local_mappings
-            .insert(name.to_string(), frame.locals_size);
+            .insert(name.to_owned(), frame.locals_size);
         frame.locals_size += size;
     }
 
     pub fn add_param(&mut self, name: &str, size: i32) {
         let frame = self.cur_frame_mut();
         frame.local_mappings.insert(
-            name.to_string(),
+            name.to_owned(),
             -frame.params_size - 4, // [..args retval retaddr savedfp || locals ]
         );
         frame.params_size += size;
     }
 
     pub fn add_global_constant(&mut self, name: &str, value: i32) {
-        self.global_mappings.insert(name.to_string(), value);
+        self.global_mappings.insert(name.to_owned(), value);
     }
 
     pub fn add_raw_word(&mut self, value: i32) {
@@ -391,7 +391,7 @@ impl Display for Linker {
             &self
                 .instructions
                 .iter()
-                .map(|inst| inst.to_string())
+                .map(|inst| inst.to_owned())
                 .collect::<Vec<_>>()
                 .join("\n"),
         )

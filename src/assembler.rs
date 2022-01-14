@@ -1,11 +1,12 @@
 use std::fmt::{Formatter, Write};
-use std::io;
+use std::io::{self, BufRead, BufReader};
 use std::num::ParseIntError;
 use std::{cmp, fmt, fs};
 
 use AssemblyError::*;
 use ParserError::*;
 
+use crate::environment::{EnvCallDef, ENV_CALL_LIST};
 use crate::linker::{DebugInfo, Linker, LinkerError, TargetTerm};
 use crate::mem::addrs;
 
@@ -35,12 +36,11 @@ impl fmt::Display for AssemblyError {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ParserError {
     InvalidIntLiteral(ParseIntError),
     UnknownMacro(String),
     SyntaxError(String),
-    StructureError(String),
     MultipleErrors(Vec<ParserError>),
 
     _NotAnInteger,
@@ -65,23 +65,15 @@ pub fn assemble_file(filename: &str) -> Result<AssemblyResult, AssemblyError> {
     }
 }
 
-pub fn assemble_from_source<T: io::Read>(mut source: T) -> Result<AssemblyResult, AssemblyError> {
-    let mut text = String::new();
-    match source.read_to_string(&mut text) {
-        Ok(_) => {}
-        Err(err) => return Err(IOError(err)),
-    };
+pub fn assemble_from_source<T: io::Read>(source: T) -> Result<AssemblyResult, AssemblyError> {
+    let mut reader = BufReader::new(source);
     let mut assembler = Assembler::new();
     assembler.init();
-    assembler.process(&text);
+    let mut buf = String::new();
+    while let Ok(_) = reader.read_line(&mut buf) {
+        assembler.process_line(&buf);
+    }
     assembler.finish()
-}
-
-#[derive(Clone)]
-struct ForLoop {
-    counter_var: String,
-    limit_var: String,
-    label_name: String,
 }
 
 struct Assembler {
@@ -93,7 +85,6 @@ struct Assembler {
 
     frame_extra_setup: String,
     frame_nloops: usize,
-    frame_cur_loop: Option<ForLoop>,
 }
 
 impl Assembler {
@@ -107,7 +98,6 @@ impl Assembler {
 
             frame_extra_setup: String::new(),
             frame_nloops: 0,
-            frame_cur_loop: None,
         }
     }
 
@@ -120,8 +110,8 @@ impl Assembler {
         self.linker.add_global_constant("sp", addrs::SP);
         self.linker.add_global_constant("fp", addrs::FP);
         self.linker.add_global_constant("retval", -3);
-        for (callcode, (_, call_name)) in crate::environment::CALL_LIST.iter().enumerate() {
-            let const_name = format!(".cc.{}", call_name);
+        for (callcode, &EnvCallDef { name, .. }) in ENV_CALL_LIST.iter().enumerate() {
+            let const_name = format!(".cc.{}", name);
             self.linker
                 .add_global_constant(&const_name, callcode as i32);
         }
@@ -130,40 +120,31 @@ impl Assembler {
         self.linker.add_global_constant(".fd.stderr", 2);
     }
 
-    pub fn process(&mut self, text: &str) {
-        for (i, line) in text.lines().enumerate() {
-            self.line_no = i + 1;
-            match self.process_line(line) {
-                Err(e) => self.errors.push((self.line_no, e)),
-                _ => {}
-            }
-        }
-    }
-
-    fn process_line(&mut self, line: &str) -> Result<(), ParserError> {
+    fn process_line(&mut self, line: &str) {
+        self.line_no += 1;
         write!(self.expanded_source, "{}\n", line).unwrap();
         let line = line.to_string();
         let line = line.split(";").next().unwrap(); // Remove comments
         let words: Vec<&str> = line.split_ascii_whitespace().collect();
         if words.len() == 0 {
-            return Ok(());
+            return;
         }
         let verb = words[0];
         let args = &words[1..];
-        self.process_statement(verb, args)?;
-        Ok(())
+        if let Err(err) = self.process_statement(verb, args) {
+            self.errors.push((self.line_no, err.clone()));
+        }
     }
 
-    fn process_internal(&mut self, text: &str) -> Result<(), ParserError> {
-        self.process_line("; BEGIN {{")?;
+    fn process_internal(&mut self, text: &str)  {
+        self.process_line("; BEGIN {{");
         for line in text.lines() {
             let line = line.trim();
             if !line.is_empty() {
-                self.process_line(&format!("    {}", line))?;
+                self.process_line(&format!("    {}", line));
             }
         }
-        self.process_line("; }} END")?;
-        Ok(())
+        self.process_line("; }} END");
     }
 
     pub fn finish(mut self) -> Result<AssemblyResult, AssemblyError> {
@@ -175,7 +156,7 @@ impl Assembler {
             Ok(bin) => bin,
             Err(errs) => return Err(LinkerErrors(errs)),
         };
-        let debug_info = DebugInfo::from(self.linker);
+        let debug_info = self.linker.into();
         let expanded_source = self.expanded_source;
         Ok(AssemblyResult {
             expanded_source,
@@ -291,65 +272,12 @@ impl Assembler {
                 .unwrap();
                 Ok(())
             }
-            ".for" => {
-                if args.len() != 4 || args[2] != "to" {
-                    return Err(SyntaxError(format!(
-                        "{} format: `var` `init` to `limit`",
-                        macro_name
-                    )));
-                }
-                let counter_var = Assembler::expect_ident(args[0])?.to_string();
-                let init_val = Assembler::expect_int_literal(args[1])?.to_string();
-                let limit_var = Assembler::expect_ident(args[3])?.to_string();
-                let label_name = format!("_loop.{}", self.frame_nloops);
-                self.frame_nloops += 1;
-                self.process_internal(&format!(
-                    "
-                    push {init_val}
-                    storef {counter_var}
-                    {label_name}:
-                ",
-                    counter_var = counter_var,
-                    init_val = init_val,
-                    label_name = label_name
-                ))?;
-                self.frame_cur_loop = Some(ForLoop {
-                    counter_var,
-                    limit_var,
-                    label_name,
-                });
-                Ok(())
-            }
-            ".end_for" => {
-                match self.frame_cur_loop.clone() {
-                    None => return Err(StructureError("no current for loop to end".to_string())),
-                    Some(ForLoop {
-                        label_name,
-                        counter_var,
-                        limit_var,
-                    }) => self.process_internal(&format!(
-                        "
-                            loadf {counter_var}
-                            addi 1
-                            storef {counter_var}
-                            loadf {counter_var}
-                            loadf {limit_var}
-                            blt {label_name}
-                        ",
-                        counter_var = counter_var,
-                        limit_var = limit_var,
-                        label_name = label_name
-                    ))?,
-                }
-                self.frame_cur_loop = None;
-                Ok(())
-            }
-            ".call" => self.process_call_macro(args),
+            ".call" => self.process_call_psuedo(args),
             unknown => Err(UnknownMacro(unknown.to_string())),
         }
     }
 
-    fn process_call_macro(&mut self, args: &[&str]) -> Result<(), ParserError> {
+    fn process_call_psuedo(&mut self, args: &[&str]) -> Result<(), ParserError> {
         if args.len() == 0 {
             return Err(SyntaxError(format!(".call takes at least 1 arg")));
         }
@@ -424,7 +352,7 @@ impl Assembler {
             )
             .unwrap();
         }
-        self.process_internal(&code)
+        self.process_internal(&code);
     }
 
     fn process_word_macro(&mut self, args: &[&str]) -> Result<(), ParserError> {

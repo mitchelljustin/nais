@@ -381,9 +381,9 @@ impl Machine {
     }
 
     pub fn load_code(&mut self, code: &[i32]) {
-        for (loc, bin_inst) in code.iter().enumerate() {
+        for (loc, bin_inst) in code.iter().cloned().enumerate() {
             let addr = inst_loc_to_addr(loc);
-            self.mem[addr] = *bin_inst;
+            self.mem[addr] = bin_inst;
         }
     }
 
