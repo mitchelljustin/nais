@@ -168,20 +168,17 @@ fn bounds_check(buf_ptr: i32, buf_len: i32) -> Result<(), RetCode> {
     Ok(())
 }
 
-macro make_env_call_list( $($name:ident)+ ) {
-    [
-        $(
-            EnvCallDef { func: $name, name: stringify!($name) },
-        )+
-    ]
+macro_rules! def_env_call_list {
+    ( $($name:ident)+ ) => {
+        pub const CALL_LIST: &[(fn(&mut Machine) -> i32, &'static str)] = &[
+            $(
+                ($name, stringify!($name)),
+            )+
+        ];
+    }
 }
 
-pub struct EnvCallDef {
-    pub name: &'static str,
-    pub func: fn(&mut Machine) -> i32,
-}
-
-pub const ENV_CALL_LIST: &[EnvCallDef] = &make_env_call_list![
+def_env_call_list![
     exit
     open
     write

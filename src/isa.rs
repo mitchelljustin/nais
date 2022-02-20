@@ -1,11 +1,11 @@
-use std::fmt::{self, Debug, Display, Formatter};
+use std::fmt;
+use std::fmt::{Debug, Display, Formatter};
 
-use crate::{
-    environment::{EnvCallDef, ENV_CALL_LIST},
-    machine::MachineError,
-    mem::addrs,
-    Machine,
-};
+use crate::environment;
+use crate::machine::MachineError;
+use crate::mem::addrs;
+
+use super::Machine;
 
 // --- START OP FUNCTIONS ---
 
@@ -80,16 +80,13 @@ pub fn storer(m: &mut Machine, offset: i32) {
 }
 
 pub fn ecall(m: &mut Machine, callcode: i32) {
-    match ENV_CALL_LIST.get(callcode as usize) {
-        None => {
-            m.set_error(MachineError::NoSuchEnvCall(callcode));
-            return;
-        }
-        Some(EnvCallDef { func, .. }) => {
-            let retval = func(m);
-            push(m, retval);
-        }
-    };
+    if callcode < 0 || callcode >= environment::CALL_LIST.len() as i32 {
+        m.set_error(MachineError::NoSuchEnvCall(callcode));
+        return;
+    }
+    let (env_call_func, _) = environment::CALL_LIST[callcode as usize];
+    let retval = env_call_func(m);
+    push(m, retval);
 }
 
 pub fn ebreak(m: &mut Machine, _: i32) {
@@ -117,21 +114,25 @@ pub fn invald(m: &mut Machine, _: i32) {
     m.set_error(MachineError::InvalidInstruction);
 }
 
-macro with_overflow($top:ident $op:tt $arg:ident) {
-    (($top as i64) $op ($arg as i64)) as i32
+macro_rules! with_overflow {
+    ($top:ident $op:tt $arg:ident) => {
+        (($top as i64) $op ($arg as i64)) as i32
+    };
 }
 
-macro binary_op_funcs($($name:ident ($operator:tt));+;) {
-    $(
-        #[allow(unused)]
-        pub fn $name(m: &mut Machine, imm: i32) {
-            if let (Some(top), Some(sec)) = (pop(m), pop(m)) {
-                let mut res = with_overflow!(top $operator sec);
-                res = with_overflow!(res $operator imm);
-                push(m, res);
+macro_rules! binary_op_funcs {
+    ( $($name:ident ($operator:tt));+; ) => {
+        $(
+            #[allow(unused)]
+            pub fn $name(m: &mut Machine, imm: i32) {
+                if let (Some(top), Some(sec)) = (pop(m), pop(m)) {
+                    let mut res = with_overflow!(top $operator sec);
+                    res = with_overflow!(res $operator imm);
+                    push(m, res);
+                }
             }
-        }
-    )+
+        )+
+    }
 }
 
 binary_op_funcs! {
@@ -145,15 +146,17 @@ binary_op_funcs! {
     xor ( ^ );
 }
 
-macro binary_op_imm_funcs( $($name:ident ($operator:tt));+; ) {
-    $(
-        #[allow(unused)]
-        pub fn $name(m: &mut Machine, imm: i32) {
-            if let Some(top) = pop(m) {
-                push(m, with_overflow!(top $operator imm));
+macro_rules! binary_op_imm_funcs {
+    ( $($name:ident ($operator:tt));+; ) => {
+        $(
+            #[allow(unused)]
+            pub fn $name(m: &mut Machine, imm: i32) {
+                if let Some(top) = pop(m) {
+                    push(m, with_overflow!(top $operator imm));
+                }
             }
-        }
-    )+
+        )+
+    }
 }
 
 binary_op_imm_funcs! {
@@ -167,20 +170,22 @@ binary_op_imm_funcs! {
     xori ( ^ );
 }
 
-macro cond_branch_funcs( $($name:ident ($cmp:tt));+; ) {
-    $(
-        #[allow(unused)]
-        pub fn $name(m: &mut Machine, offset: i32) {
-            if let (Some(top), Some(sec)) = (pop(m), pop(m)) {
-                if sec $cmp top {
-                    jump(m, offset);
+macro_rules! branch_cmp_funcs {
+    ( $($name:ident ($cmp:tt));+; ) => {
+        $(
+            #[allow(unused)]
+            pub fn $name(m: &mut Machine, offset: i32) {
+                if let (Some(top), Some(sec)) = (pop(m), pop(m)) {
+                    if sec $cmp top {
+                        jump(m, offset);
+                    }
                 }
             }
-        }
-    )+
+        )+
+    }
 }
 
-cond_branch_funcs! {
+branch_cmp_funcs! {
     beq ( == );
     bne ( != );
     blt ( < );
@@ -203,17 +208,19 @@ pub fn sari(m: &mut Machine, shamt: i32) {
     }
 }
 
-macro logical_shift_imm_funcs( $($name:ident ($shop:tt));+; ) {
-    $(
-        pub fn $name(m: &mut Machine, shamt: i32) {
-            if let Some(top) = pop(m) {
-                let top1 = top as u32;
-                let top2 = (top1 $shop shamt);
-                let top3 = top2 as i32;
-                push(m, top3);
+macro_rules! logical_shift_imm_funcs {
+    ( $($name:ident ($shop:tt));+; ) => {
+        $(
+            pub fn $name(m: &mut Machine, shamt: i32) {
+                if let Some(top) = pop(m) {
+                    let top1 = top as u32;
+                    let top2 = (top1 $shop shamt);
+                    let top3 = top2 as i32;
+                    push(m, top3);
+                }
             }
-        }
-    )+
+        )+
+    };
 }
 
 logical_shift_imm_funcs! {
@@ -221,17 +228,19 @@ logical_shift_imm_funcs! {
     shri ( >> );
 }
 
-macro logical_shift_funcs( $($name:ident ($shop:tt));+; ) {
-    $(
-        pub fn $name(m: &mut Machine, _: i32) {
-            if let (Some(shamt), Some(val)) = (pop(m), pop(m)) {
-                let val1 = val as u32;
-                let val2 = val1 $shop shamt;
-                let val3 = val2 as i32;
-                push(m, val3);
+macro_rules! logical_shift_funcs {
+    ( $($name:ident ($shop:tt));+; ) => {
+        $(
+            pub fn $name(m: &mut Machine, _: i32) {
+                if let (Some(shamt), Some(val)) = (pop(m), pop(m)) {
+                    let val1 = val as u32;
+                    let val2 = val1 $shop shamt;
+                    let val3 = val2 as i32;
+                    push(m, val3);
+                }
             }
-        }
-    )+
+        )+
+    };
 }
 
 logical_shift_funcs! {
@@ -275,18 +284,20 @@ impl Debug for Op {
     }
 }
 
-macro make_op_list( $($name:ident)+ ) {
-    [
-        $(
-            Op {
-                name: stringify!($name),
-                func: $name,
-            },
-        )+
-    ]
+macro_rules! def_op_list {
+    ( $($name:ident)+ ) => {
+        pub const OP_LIST: &'static [Op] = &[
+            $(
+                Op {
+                    name: stringify!($name),
+                    func: $name,
+                },
+            )+
+        ];
+    }
 }
 
-pub const OP_LIST: &'static [Op] = &make_op_list![
+def_op_list![
     invald
     push addsp
     loadi storei loadf storef load store loadr storer
