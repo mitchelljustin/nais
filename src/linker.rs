@@ -311,21 +311,18 @@ impl Linker {
         if !unresolved.is_empty() {
             return Err(unresolved
                 .into_iter()
-                .map(|r| r.unwrap_err())
+                .map(Result::unwrap_err)
                 .cloned()
                 .collect());
         }
-        let resolutions = resolutions
-            .into_iter()
-            .map(|r| r.unwrap())
-            .collect::<Vec<_>>();
+        let resolutions: Vec<_> = resolutions.into_iter().map(Result::unwrap).collect();
         let value = resolutions.iter().map(|(v, _)| v).sum();
         let label_type = resolutions[0].1;
         let idents = target
             .into_iter()
             .filter_map(|t| match t {
                 TargetTerm::Ident(name) => Some(name),
-                TargetTerm::Literal(_) => None,
+                _ => None,
             })
             .collect();
         Ok(ResolvedTarget {
@@ -338,19 +335,15 @@ impl Linker {
 
     pub fn relocate(&mut self) -> Result<(), Vec<(usize, Vec<String>)>> {
         let mut unrelocated = Vec::<(usize, Vec<String>)>::new();
-        let mut inst_updates = Vec::<(usize, i32)>::new();
         for (&inst_loc, target) in self.to_relocate.iter() {
             let inst_addr = inst_loc_to_addr(inst_loc);
             match self.resolve(inst_loc, target) {
                 Ok(resolved) => {
-                    inst_updates.push((inst_loc, resolved.value));
+                    self.instructions[inst_loc].arg = resolved.value;
                     self.resolved_targets.insert(inst_addr, resolved);
                 }
                 Err(unresolved) => unrelocated.push((inst_loc, unresolved)),
             }
-        }
-        for (loc, arg) in inst_updates.into_iter() {
-            self.instructions[loc].arg = arg;
         }
         if !unrelocated.is_empty() {
             Err(unrelocated)

@@ -250,15 +250,17 @@ logical_shift_funcs! {
 
 // --- END OP FUNCTIONS ---
 
-pub struct Op {
+pub type OpFunction = fn(&mut Machine, i32);
+
+pub struct Operation {
     pub name: &'static str,
-    pub func: fn(&mut Machine, i32),
+    pub func: OpFunction,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct Inst {
     pub addr: Option<i32>,
-    pub op: &'static Op,
+    pub op: &'static Operation,
     pub opcode: u8,
     pub arg: i32,
 }
@@ -266,7 +268,7 @@ pub struct Inst {
 impl Display for Inst {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let addr = match self.addr {
-            None => String::new(),
+            None => "".to_owned(),
             Some(addr) => format!("{:x} ", addr),
         };
         let arg_trunc = self.arg & 0xffffff;
@@ -278,7 +280,7 @@ impl Display for Inst {
     }
 }
 
-impl Debug for Op {
+impl Debug for Operation {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("OpFn").field("name", &self.name).finish()
     }
@@ -286,9 +288,9 @@ impl Debug for Op {
 
 macro_rules! def_op_list {
     ( $($name:ident)+ ) => {
-        pub const OP_LIST: &'static [Op] = &[
+        pub const OP_LIST: &'static [Operation] = &[
             $(
-                Op {
+                Operation {
                     name: stringify!($name),
                     func: $name,
                 },
@@ -308,4 +310,4 @@ def_op_list![
     ecall ebreak
 ];
 
-pub const OP_INVALID: &'static Op = &OP_LIST[0];
+pub const OP_INVALID: &'static Operation = &OP_LIST[0];

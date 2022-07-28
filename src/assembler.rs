@@ -1,7 +1,7 @@
 use std::fmt::{Formatter, Write};
-use std::io;
 use std::num::ParseIntError;
 use std::{cmp, fmt, fs};
+use std::{error, io};
 
 use AssemblyError::*;
 use ParserError::*;
@@ -9,11 +9,14 @@ use ParserError::*;
 use crate::linker::{DebugInfo, Linker, LinkerError, TargetTerm};
 use crate::mem::addrs;
 
+#[derive(Debug)]
 pub enum AssemblyError {
     IOError(io::Error),
     ASMParserErrors(Vec<(usize, ParserError)>),
     LinkerErrors(Vec<LinkerError>),
 }
+
+impl error::Error for AssemblyError {}
 
 impl fmt::Display for AssemblyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -76,14 +79,6 @@ pub fn assemble_from_source<T: io::Read>(mut source: T) -> Result<AssemblyResult
     assembler.process(&text);
     assembler.finish()
 }
-
-#[derive(Clone)]
-struct ForLoop {
-    counter_var: String,
-    limit_var: String,
-    label_name: String,
-}
-
 struct Assembler {
     errors: Vec<(usize, ParserError)>,
     linker: Linker,
@@ -93,7 +88,6 @@ struct Assembler {
 
     frame_extra_setup: String,
     frame_nloops: usize,
-    frame_cur_loop: Option<ForLoop>,
 }
 
 impl Assembler {
@@ -107,7 +101,6 @@ impl Assembler {
 
             frame_extra_setup: String::new(),
             frame_nloops: 0,
-            frame_cur_loop: None,
         }
     }
 
@@ -159,7 +152,7 @@ impl Assembler {
         for line in text.lines() {
             let line = line.trim();
             if !line.is_empty() {
-                self.process_line(&format!("    {}", line))?;
+                self.process_line(&format!("    {line}"))?;
             }
         }
         self.process_line("; }} END")?;
@@ -289,59 +282,6 @@ impl Assembler {
                     addr_name = addr_name
                 )
                 .unwrap();
-                Ok(())
-            }
-            ".for" => {
-                if args.len() != 4 || args[2] != "to" {
-                    return Err(SyntaxError(format!(
-                        "{} format: `var` `init` to `limit`",
-                        macro_name
-                    )));
-                }
-                let counter_var = Assembler::expect_ident(args[0])?.to_string();
-                let init_val = Assembler::expect_int_literal(args[1])?.to_string();
-                let limit_var = Assembler::expect_ident(args[3])?.to_string();
-                let label_name = format!("_loop.{}", self.frame_nloops);
-                self.frame_nloops += 1;
-                self.process_internal(&format!(
-                    "
-                    push {init_val}
-                    storef {counter_var}
-                    {label_name}:
-                ",
-                    counter_var = counter_var,
-                    init_val = init_val,
-                    label_name = label_name
-                ))?;
-                self.frame_cur_loop = Some(ForLoop {
-                    counter_var,
-                    limit_var,
-                    label_name,
-                });
-                Ok(())
-            }
-            ".end_for" => {
-                match self.frame_cur_loop.clone() {
-                    None => return Err(StructureError("no current for loop to end".to_string())),
-                    Some(ForLoop {
-                        label_name,
-                        counter_var,
-                        limit_var,
-                    }) => self.process_internal(&format!(
-                        "
-                            loadf {counter_var}
-                            addi 1
-                            storef {counter_var}
-                            loadf {counter_var}
-                            loadf {limit_var}
-                            blt {label_name}
-                        ",
-                        counter_var = counter_var,
-                        limit_var = limit_var,
-                        label_name = label_name
-                    ))?,
-                }
-                self.frame_cur_loop = None;
                 Ok(())
             }
             ".call" => self.process_call_macro(args),

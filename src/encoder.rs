@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
-use crate::isa::{Inst, Op, OP_LIST};
+use crate::isa::{Inst, Operation, OP_LIST};
 
 #[derive(Clone)]
 pub struct Encoder {
-    pub name_to_op: HashMap<&'static str, &'static Op>,
+    pub name_to_op: HashMap<&'static str, &'static Operation>,
     pub op_to_opcode: HashMap<&'static str, u8>,
-    pub opcode_to_op: HashMap<u8, &'static Op>,
+    pub opcode_to_op: HashMap<u8, &'static Operation>,
 }
 
 impl Encoder {

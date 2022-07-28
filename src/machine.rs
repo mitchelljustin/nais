@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::error::Error;
 use std::fmt::{Debug, Formatter, Write as FmtWrite};
 use std::io::Write;
 use std::ops::Range;
@@ -13,6 +14,9 @@ use crate::isa::Inst;
 use crate::linker::{DebugInfo, ResolvedTarget};
 use crate::mem::{addrs, inst_loc_to_addr, segs, Memory};
 use crate::util;
+
+type ErrorResult<T> = Result<T, Box<dyn Error>>;
+type StringResult = ErrorResult<String>;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum MachineError {
@@ -155,9 +159,9 @@ impl Machine {
         self.set_status(Debugging);
     }
 
-    fn debug_cycle(&mut self) {
+    fn debug_cycle(&mut self) -> Result<(), Box<dyn Error>> {
         println!("FRAME:\n{}\n", self.frame_dump());
-        println!("CODE:\n{}", self.code_dump_around_pc(-4..5));
+        println!("CODE:\n{}", self.code_dump_around_pc(-4..5)?);
         loop {
             print!("debug% ");
             io::stdout().flush().unwrap();
@@ -174,15 +178,15 @@ impl Machine {
             match command {
                 "c" | "continue" => {
                     self.set_status(Running);
-                    return;
+                    return Ok(());
                 }
                 "n" | "next" => {
-                    return;
+                    return Ok(());
                 }
                 "pc" => match int_args[..] {
-                    [mid, len] => println!("{}", self.code_dump_around(mid, -len..len + 1)),
-                    [len] => println!("{}", self.code_dump_around_pc(-len..len + 1)),
-                    [] => println!("{}", self.code_dump_around_pc(-15..16)),
+                    [mid, len] => println!("{}", self.code_dump_around(mid, -len..len + 1)?),
+                    [len] => println!("{}", self.code_dump_around_pc(-len..len + 1)?),
+                    [] => println!("{}", self.code_dump_around_pc(-15..16)?),
                     _ => {
                         println!("format: pc addr [range]");
                     }
@@ -203,7 +207,7 @@ impl Machine {
                 }
                 "x" => {
                     self.set_status(Stopped);
-                    return;
+                    return Ok(());
                 }
                 "" => {}
                 _ => {
@@ -213,21 +217,21 @@ impl Machine {
         }
     }
 
-    pub fn code_dump_around_pc(&self, drange: Range<i32>) -> String {
+    pub fn code_dump_around_pc(&self, drange: Range<i32>) -> StringResult {
         self.code_dump_around(self.getpc(), drange)
     }
 
-    pub fn code_dump_around(&self, middle: i32, drange: Range<i32>) -> String {
+    pub fn code_dump_around(&self, middle: i32, drange: Range<i32>) -> StringResult {
         let mut range = (middle + drange.start)..(middle + drange.end);
         segs::CODE.clamp_range(&mut range);
         self.code_dump(middle, range)
     }
 
-    pub fn code_dump(&self, highlight: i32, addr_range: Range<i32>) -> String {
+    pub fn code_dump(&self, highlight: i32, addr_range: Range<i32>) -> StringResult {
         let mut out = String::new();
         let mut cur_frame = match self.debug_info.frame_for_inst_addr.get(&addr_range.start) {
             Some(name) => {
-                writeln!(out, ".. {}:", name).unwrap();
+                writeln!(out, ".. {name}:")?;
                 Some(name.clone())
             }
             None => None,
@@ -239,15 +243,15 @@ impl Machine {
                     cur_frame = Some(frame.clone());
                 }
             }
-            out.write_str("    ").unwrap();
+            out.write_str("    ")?;
             match self.fetch_inst(addr) {
-                Ok(inst) => out.write_str(&inst.to_string()).unwrap(),
+                Ok(inst) => out.write_str(&inst.to_string())?,
                 Err(MachineError::CannotDecodeInst(bin_inst)) => {
-                    writeln!(out, "{:x} [0x{:08x}]", addr, bin_inst).unwrap();
+                    writeln!(out, "{addr:x} [0x{bin_inst:08x}]")?;
                     continue;
                 }
                 Err(err) => {
-                    writeln!(out, "ERR FETCHING INST {:?}", err).unwrap();
+                    writeln!(out, "ERR FETCHING INST {:?}", err)?;
                     continue;
                 }
             };
@@ -260,17 +264,16 @@ impl Machine {
                         " {:12} {}",
                         idents.first().unwrap_or(&"".to_string()),
                         label_type
-                    )
-                    .unwrap();
+                    )?;
                 }
-                None => out.write_str(&" ".repeat(15)).unwrap(),
+                None => out.write_str(&" ".repeat(15))?,
             }
             if addr == highlight {
-                out.write_str(" <========").unwrap()
+                out.write_str(" <========")?;
             }
-            out.write_str("\n").unwrap();
+            out.write_str("\n")?;
         }
-        out
+        Ok(out)
     }
 
     pub fn frame_dump(&self) -> String {
@@ -408,9 +411,9 @@ impl Machine {
             self.cycle();
         }
         if self.status != Stopped && self.debug_on_error {
-            println!("{:?}", self);
+            println!("{self:?}");
             self.breakpoint();
-            self.debug_cycle();
+            self.debug_cycle().unwrap();
         }
     }
 
@@ -426,7 +429,7 @@ impl Machine {
         self.setpc(self.getpc() + 1);
         self.ncycles += 1;
         if self.status == Debugging {
-            self.debug_cycle();
+            self.debug_cycle().unwrap();
         }
         if self.ncycles == self.max_cycles {
             self.set_error(MaxCyclesReached);
