@@ -307,7 +307,7 @@ impl Linker {
                 TargetTerm::Ident(name) => self.resolve_ident(inst_loc, name).ok_or(name),
                 TargetTerm::Literal(x) => Ok((*x, LabelType::_Literal)),
             })
-            .partition(|r| r.is_ok());
+            .partition(Result::is_ok);
         if !unresolved.is_empty() {
             return Err(unresolved
                 .into_iter()

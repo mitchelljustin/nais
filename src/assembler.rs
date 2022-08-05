@@ -43,7 +43,6 @@ pub enum ParserError {
     InvalidIntLiteral(ParseIntError),
     UnknownMacro(String),
     SyntaxError(String),
-    StructureError(String),
     MultipleErrors(Vec<ParserError>),
 
     _NotAnInteger,
